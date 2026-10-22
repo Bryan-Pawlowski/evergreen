@@ -22,11 +22,13 @@ jobs:
       # the templates are never actually built.
       - name: Install tectonic
         run: |
-          TECTONIC_VERSION=0.15.0
-          curl -fsSL -o tectonic.tar.gz \
-            "https://github.com/tectonic-typesetting/tectonic/releases/download/tectonic%40${TECTONIC_VERSION}/tectonic-${TECTONIC_VERSION}-x86_64-unknown-linux-gnu.tar.gz"
+          set -euo pipefail
+          TECTONIC_VERSION=0.17.0
+          URL="https://github.com/tectonic-typesetting/tectonic/releases/download/tectonic%40${TECTONIC_VERSION}/tectonic-${TECTONIC_VERSION}-x86_64-unknown-linux-gnu.tar.gz"
+          curl -fsSL -o tectonic.tar.gz "$URL"
           tar -xzf tectonic.tar.gz
           sudo mv tectonic /usr/local/bin/tectonic
+          chmod +x /usr/local/bin/tectonic
           tectonic --version
 
       - name: Install the plugin's Python dependencies
@@ -37,17 +39,21 @@ jobs:
       - name: Self-test (compiles every shipped template)
         run: python -m evergreen.selftest
 
-      - name: Validate the plugin manifest
-        run: |
-          pip install hermes-agent
-          hermes plugins validate .
+      # `hermes plugins validate` is the authoritative gate, but it needs a
+      # Hermes new enough to have it, and the PyPI release lags the git
+      # install. This is a self-contained subset of the same manifest checks,
+      # so CI does not depend on a specific Hermes version. The real
+      # validator is run at release time.
+      - name: Check the plugin manifest
+        run: python scripts/check_manifest.py
 
       - name: Check for leaked personal data
         run: python scripts/check_no_user_data.py
 
   negative-tests:
-    # The leak check must be able to FAIL. A check that cannot fail is not a
-    # check, so plant a leak and assert the checker catches it.
+    # The checks must be able to FAIL. A check that cannot fail is not a
+    # check, so plant a leak and a broken manifest and assert both are
+    # rejected.
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -57,7 +63,10 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: The checker must reject a planted leak
+      - name: Install the plugin's Python dependencies
+        run: python -m pip install ruamel.yaml jsonschema
+
+      - name: The leak check must reject a planted leak
         run: |
           # Every literal is assembled at runtime, so this file does not
           # itself trip the checker it is testing.
@@ -70,3 +79,17 @@ jobs:
             exit 1
           fi
           echo "OK: the leak check caught the planted leak"
+
+      - name: The manifest check must reject a broken manifest
+        run: |
+          cp plugin.yaml /tmp/plugin.yaml.bak
+          # Drop a declared tool, so the declared and registered sets differ.
+          sed -i '/- career_build/d' plugin.yaml
+          if python scripts/check_manifest.py; then
+            echo "FAIL: the manifest check passed a broken manifest"
+            cp /tmp/plugin.yaml.bak plugin.yaml
+            exit 1
+          fi
+          cp /tmp/plugin.yaml.bak plugin.yaml
+          python scripts/check_manifest.py
+          echo "OK: the manifest check caught the broken manifest"
