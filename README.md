@@ -61,6 +61,7 @@ Or drive it from the tools: `career_init`, `career_list`, `career_ingest`,
 From a shell:
 
 ```bash
+hermes career list
 hermes career status
 hermes career build --template yaac --target acme
 ```

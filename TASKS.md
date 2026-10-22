@@ -212,7 +212,10 @@ These forks were decided and are no longer open:
 - ☑ Four templates shipped (`plain`, `yaac`, `altacv`, `minimal`), each
   compiled by the selftest, each visually reviewed.
 - ☑ `hermes plugins validate` passes; `hermes plugins doctor --ci` exits 0.
-- ☑ Selftest: 37 core checks + 16 tool-level end-to-end checks, all green.
+- ☑ Selftest: 37 core checks + 36 tool-level end-to-end checks + 8 CLI
+  checks, all green. The CLI checks exist because the `hermes career`
+  subcommand is wired separately from the tools and had silently drifted
+  out of sync with them.
 - ☑ Installed and enabled in the active profile.
 - ☑ **A public GitHub repo** with a real `.gitignore` and `.gitattributes`,
   an MIT `LICENSE`, a pre-commit leak check, a self-contained manifest
