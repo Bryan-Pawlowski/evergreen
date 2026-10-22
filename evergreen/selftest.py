@@ -554,8 +554,106 @@ def _run_tool_checks(fake_home: Path) -> int:
     return 0
 
 
+def test_cli_surface() -> int:
+    """The `hermes career ...` subcommand must match the tool surface.
+
+    The CLI is wired separately from the tools, so it can drift: the tools
+    moved to name-based workspaces and the CLI kept the old path argument.
+    """
+    import argparse
+    import json as _json
+    import io
+    import contextlib
+
+    from . import career_cli, setup_cli
+
+    failures = 0
+
+    def check(label, condition, detail=""):
+        nonlocal failures
+        ok = bool(condition)
+        print(f"[{'PASS' if ok else 'FAIL'}] {label}"
+              + (f" — {detail}" if detail and not ok else ""))
+        if not ok:
+            failures += 1
+        return ok
+
+    # Hermes builds the command like this: it creates the ArgumentParser
+    # for the command, hands it to setup_fn, and calls the handler with
+    # the parsed namespace. Build it the same way here, so the test
+    # exercises the real contract rather than a convenient imitation.
+    parser = argparse.ArgumentParser(prog="hermes career")
+    setup_cli(parser)
+
+    # The subcommands the README and the chat command both promise.
+    sub_action = next(a for a in parser._actions
+                      if isinstance(a, argparse._SubParsersAction))
+    names = set(sub_action.choices)
+    check("cli: the subcommands are present",
+          {"init", "list", "status", "templates", "match", "build"} <= names,
+          str(sorted(names)))
+
+    # `init` takes a name, not a path.
+    init_parser = sub_action.choices["init"]
+    init_positional = [a.dest for a in init_parser._actions
+                       if not a.option_strings]
+    check("cli: init takes a name argument", init_positional == ["name"],
+          str(init_positional))
+    check("cli: init no longer takes a path argument",
+          "path" not in init_positional)
+
+    # The handler must be reachable the way Hermes reaches it: parse the
+    # argv, then call the namespace' func.
+    ns = parser.parse_args(["init", "demo"])
+    check("cli: the parsed namespace routes to the handler",
+          getattr(ns, "func", None) is career_cli,
+          str(getattr(ns, "func", None)))
+    check("cli: init parses the workspace name",
+          getattr(ns, "name", None) == "demo",
+          str(getattr(ns, "name", None)))
+    check("cli: the subcommand is on the namespace",
+          getattr(ns, "evergreen_command", None) == "init",
+          str(getattr(ns, "evergreen_command", None)))
+
+    # An unknown subcommand must not crash the CLI. argparse rejects it
+    # itself with exit code 2 and its own usage message, which is the
+    # right behaviour — the plugin handler is never reached.
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            try:
+                parser.parse_args(["__nope__"])
+                code = 0
+            except SystemExit as exc:
+                code = exc.code
+    check("cli: an unknown subcommand is rejected cleanly",
+          code == 2, f"exit code {code!r}")
+    check("cli: an unknown subcommand prints a usage message",
+          "usage" in err.getvalue().lower(),
+          err.getvalue()[:120])
+
+    # With no subcommand at all, the handler runs and prints the usage.
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        ns = parser.parse_args([])
+        code = ns.func(ns)
+    check("cli: no subcommand prints the usage and exits non-zero",
+          code == 1 and "hermes career" in buf.getvalue(),
+          f"code={code!r} out={buf.getvalue()[:80]!r}")
+
+    print()
+    if failures:
+        print(f"{failures} CLI check(s) FAILED")
+        return 1
+    print("all CLI checks passed")
+    return 0
+
+
 if __name__ == "__main__":
     rc = main()
     if rc == 0:
         rc = test_tools_end_to_end()
+    if rc == 0:
+        rc = test_cli_surface()
     sys.exit(rc)

@@ -814,43 +814,53 @@ def _status(ctx=None) -> str:
 # --------------------------------------------------------------------------
 
 def career_cli(args) -> int:
-    """``hermes career ...`` — the same operations from a shell."""
-    parser = args._evergreen_parser  # set up in setup()
-    opts = parser.parse_known_args(args)[0]
+    """``hermes career ...`` — the same operations from a shell.
 
-    if opts.evergreen_command == "init":
-        print(career_init({"path": opts.path}))
+    Hermes calls this with the parsed argparse namespace, so the
+    subcommand and its options arrive as attributes.
+    """
+    command = getattr(args, "evergreen_command", None)
+
+    if command == "init":
+        print(career_init({"name": getattr(args, "name", None)}))
         return 0
-    if opts.evergreen_command == "status":
+    if command == "list":
+        print(career_list({}))
+        return 0
+    if command == "status":
         print(_status())
         return 0
-    if opts.evergreen_command == "templates":
+    if command == "templates":
         print(career_templates({}))
         return 0
-    if opts.evergreen_command == "match":
-        payload = {"job_description_path": opts.job_description,
-                   "target": opts.target}
+    if command == "match":
+        payload = {"job_description_path": getattr(args, "job_description", None),
+                   "target": getattr(args, "target", None)}
         print(career_match(payload))
         return 0
-    if opts.evergreen_command == "build":
-        print(career_build({"template": opts.template, "target": opts.target}))
+    if command == "build":
+        print(career_build({"template": getattr(args, "template", None),
+                            "target": getattr(args, "target", None)}))
         return 0
 
-    parser.print_help()
+    print("Usage: hermes career "
+          "{init <name> | list | status | templates | match <file> | build}")
     return 1
 
 
-def setup_cli(subparsers) -> None:
-    """Wire the ``career`` subcommand into the argparse tree."""
-    parser = subparsers.add_parser(
-        "career", help="Manage the Evergreen career workspace and build CVs."
-    )
+def setup_cli(parser) -> None:
+    """Wire the ``career`` subcommand into the argparse tree.
+
+    Hermes hands ``setup_fn`` the ArgumentParser it created for this
+    command, and calls the handler with the parsed namespace.
+    """
     parser.set_defaults(func=career_cli)
     sub = parser.add_subparsers(dest="evergreen_command")
 
-    p = sub.add_parser("init", help="Create a workspace at a path.")
-    p.add_argument("path")
+    p = sub.add_parser("init", help="Create a named workspace under the Hermes home.")
+    p.add_argument("name")
 
+    sub.add_parser("list", help="List the workspaces under the Hermes home.")
     sub.add_parser("status", help="Show the workspace and intake progress.")
     sub.add_parser("templates", help="List the available CV templates.")
 
@@ -861,8 +871,6 @@ def setup_cli(subparsers) -> None:
     p = sub.add_parser("build", help="Render and compile a CV.")
     p.add_argument("--template", default=None)
     p.add_argument("--target", default=None)
-
-    parser._evergreen_parser = parser
 
 
 # --------------------------------------------------------------------------
