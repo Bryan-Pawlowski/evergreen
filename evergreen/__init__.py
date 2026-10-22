@@ -36,7 +36,7 @@ SHIPPED_TEMPLATES = PLUGIN_ROOT / "templates"
 
 # Where a workspace lives when the user has not chosen one. The config value
 # is read from plugins.entries.<id>.settings.workspace_path.
-_DEFAULT_WORKSPACE_NAME = "evergreen"
+_DEFAULT_WORKSPACE_NAME = "evergreen"  # suggested name for a first workspace
 
 
 def _setting(ctx, key: str, default=None):
@@ -74,8 +74,18 @@ def _resolve_workspace(ctx, explicit: str | None = None,
     if found:
         return found
 
-    home = Path.home() / _DEFAULT_WORKSPACE_NAME
-    return Workspace(home)
+    # Fall back to the named workspaces under the Hermes home. If there is
+    # exactly one, it is the obvious default; if there are several, the
+    # caller should ask which one by name rather than guessing.
+    workspaces = list_workspaces()
+    if len(workspaces) == 1:
+        return Workspace(Path(workspaces[0]["path"]))
+    if workspaces:
+        return Workspace(hermes_home() / workspaces[0]["name"])
+
+    # Nothing exists yet. Point at the Hermes home so the error message
+    # names the place a workspace would go.
+    return Workspace(hermes_home())
 
 
 def _shipped_template_roots(workspace: Workspace) -> list[Path]:
@@ -777,10 +787,19 @@ def career_command(raw_args: str, ctx=None, **kw) -> str:
 def _status(ctx=None) -> str:
     workspace = _resolve_workspace(ctx)
     if not workspace.exists():
+        # Point at the workspaces that do exist, if any, so the answer is
+        # a name to pass rather than a path to guess.
+        available = [w["name"] for w in list_workspaces()]
+        message = "No workspace yet. Create one with /career init <name>."
+        if available:
+            message = (f"No workspace selected. Pass a name — "
+                       f"{', '.join(available)} — or create one with "
+                       f"/career init <name>.")
         return json.dumps({
             "ok": False,
             "workspace": str(workspace.root),
-            "message": "No workspace yet. Create one with /career init <name>.",
+            "available": available,
+            "message": message,
         }, indent=2)
 
     state = ws_mod.load_checklist(workspace)

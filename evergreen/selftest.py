@@ -522,6 +522,16 @@ def _run_tool_checks(fake_home: Path) -> int:
           not (fake_home / "career.yaml").exists()
           and not (fake_home / "notes").exists())
 
+    # With no name, no configured path, and no walk-up hit, the resolver
+    # must land on a workspace that exists rather than on a stale path.
+    from . import _resolve_workspace
+    resolved = _resolve_workspace(None)
+    check("tools: the resolver finds the single workspace by default",
+          str(resolved.root) == ws, str(resolved.root))
+    resolved = _resolve_workspace(None, name=ws_name)
+    check("tools: the resolver finds a workspace by name",
+          str(resolved.root) == ws, str(resolved.root))
+
     jd = ("We are hiring a CUDA rendering engineer. Requirements: C++, "
           "GPU programming, Docker, Python. Nice to have: Vulkan.")
     out = _json.loads(career_match({
