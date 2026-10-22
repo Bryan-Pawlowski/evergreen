@@ -47,15 +47,16 @@ single static binary, no TeX distribution needed. If tectonic is missing,
 ## Use
 
 ```
-/career init ~/evergreen      create a workspace
-/career status                workspace + intake progress
-/career templates             list the CV templates
-/career match job.txt         match a job description
-/career build acme            render the tailored CV
+/career init jane              create a named workspace
+/career list                   list the workspaces
+/career status                 workspace + intake progress
+/career templates              list the CV templates
+/career match job.txt          match a job description
+/career build acme             render the tailored CV
 ```
 
-Or drive it from the tools: `career_init`, `career_ingest`, `career_profile`,
-`career_match`, `career_build`, `career_templates`.
+Or drive it from the tools: `career_init`, `career_list`, `career_ingest`,
+`career_profile`, `career_match`, `career_build`, `career_templates`.
 
 From a shell:
 
@@ -66,8 +67,11 @@ hermes career build --template yaac --target acme
 
 ## The workspace
 
+A workspace is created **by name**, and the name becomes a directory
+directly under the Hermes home — one level deeper than the home itself:
+
 ```
-~/evergreen/
+<hermes home>/jane/
 ├── career.yaml         the career profile — the source of truth
 ├── notes/              prose nuance, one markdown file per topic
 ├── raw/                immutable ingested sources (content-hashed)
@@ -77,10 +81,18 @@ hermes career build --template yaac --target acme
 └── .evergreen/         intake checklist + workspace metadata
 ```
 
-It is a plain directory: git-track it, back it up, move it, or point another
-tool at it. Nothing about it is Hermes-specific. A workspace is any directory
-with a `career.yaml` in it — the `notes/`, `raw/`, and `out/` folders are
-conventional, not required.
+The name is recorded in `career.yaml`, so it travels with the data if the
+workspace is moved or copied. `/career list` shows the workspaces that
+exist, and any tool can be pointed at one with a `name` argument.
+
+The workspace sits alongside Hermes' own state (`plugins/`, `sessions/`,
+`skills/`, …), so the plugin refuses a name that collides with something
+already in the Hermes home rather than overwriting it.
+
+The rest of it is a plain directory: git-track it, back it up, move it, or
+point another tool at it. Nothing about the layout is Hermes-specific. A
+workspace is any directory with a `career.yaml` in it — the `notes/`,
+`raw/`, and `out/` folders are conventional, not required.
 
 ## The career profile
 

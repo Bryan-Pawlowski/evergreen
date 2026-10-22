@@ -26,7 +26,9 @@ from . import matcher as matcher_mod
 from . import workspace as ws_mod
 from .build import BuildError, build_tex, find_tectonic, tectonic_install_hint
 from .career import (CareerProfile, CareerProfileError, Workspace,
-                      _hermes_home_markers, find_workspace, validate)
+                      _hermes_home_markers, find_workspace, hermes_home,
+                      list_workspaces, validate, validate_workspace_name,
+                      workspace_path_for_name)
 from .render import TemplateError, discover_templates, load_template, render_tex, slots_in, stage
 
 PLUGIN_ROOT = Path(__file__).resolve().parent.parent
@@ -44,8 +46,23 @@ def _setting(ctx, key: str, default=None):
         return default
 
 
-def _resolve_workspace(ctx, explicit: str | None = None) -> Workspace:
-    """Find the workspace: explicit path, then config, then a walk up."""
+def _resolve_workspace(ctx, explicit: str | None = None,
+                       name: str | None = None) -> Workspace:
+    """Find the workspace to act on.
+
+    Resolution order: an explicit name, an explicit path, the configured
+    ``workspace_path``, then a walk up from the working directory. The
+    name is the primary handle — a workspace is created under a name and
+    referred to by that name.
+    """
+    if name:
+        try:
+            return Workspace(workspace_path_for_name(name))
+        except CareerProfileError:
+            # Fall through to the other resolution paths rather than
+            # failing outright; the caller reports the real problem.
+            pass
+
     if explicit:
         return Workspace(Path(explicit).expanduser())
 
@@ -86,22 +103,33 @@ def _resolve_template(workspace: Workspace, template_id: str | None):
 # --------------------------------------------------------------------------
 
 def career_init(params: dict, ctx=None, **kw) -> str:
-    """Create a career workspace at a path the user chooses."""
-    raw_path = (params.get("path") or "").strip()
-    if not raw_path:
+    """Create a named career workspace under the Hermes home."""
+    raw_name = (params.get("name") or "").strip()
+    if not raw_name:
         return json.dumps({
-            "error": "A path is required. Pick a directory for the workspace, "
-                     "for example ~/evergreen or ~/Documents/career."
+            "error": "A workspace name is required. Pick a short name for "
+                     "this workspace — it becomes a directory directly under "
+                     "the Hermes home, e.g. 'jane'.",
         })
 
-    workspace = Workspace(Path(raw_path).expanduser())
+    try:
+        name = validate_workspace_name(raw_name)
+    except CareerProfileError as exc:
+        return json.dumps({"error": str(exc)})
+
+    # A workspace lives directly under the Hermes home, one level deeper
+    # than the Hermes home itself.
+    root = hermes_home() / name
+    workspace = Workspace(root)
+
     if workspace.exists():
         return json.dumps({
             "ok": True,
             "status": "exists",
+            "name": name,
             "path": str(workspace.root),
             "career_profile": str(workspace.career_path),
-            "message": "A workspace already exists here.",
+            "message": f"A workspace named {name!r} already exists.",
         })
 
     # Refuse to clobber a file that is not a career profile. The name is
@@ -111,8 +139,22 @@ def career_init(params: dict, ctx=None, **kw) -> str:
         return json.dumps({
             "error": f"{workspace.career_path} already exists and is not a "
                      f"career profile. Refusing to overwrite it. Choose a "
-                     f"different directory, or move that file aside.",
+                     f"different name, or move that file aside.",
             "path": str(workspace.career_path),
+        })
+
+    # The workspace sits directly under the Hermes home, so it shares that
+    # directory with Hermes' own state: plugins/, sessions/, skills/,
+    # state.db, and friends. A name that collides with one of those would
+    # either destroy live state or shadow a directory Hermes expects to
+    # find. Checked against the real home rather than a hardcoded list, so
+    # this stays correct as Hermes grows new top-level entries.
+    if root.exists():
+        return json.dumps({
+            "error": f"{root} already exists and is not a career workspace. "
+                     f"That name is in use by the Hermes home. Pick a "
+                     f"different name for the workspace.",
+            "path": str(root),
         })
 
     # Refuse to build a workspace inside a Hermes home. A Hermes home holds
@@ -133,6 +175,7 @@ def career_init(params: dict, ctx=None, **kw) -> str:
     if not workspace.career_path.exists():
         workspace.career_path.write_text(
             "schema_version: 1\n"
+            f"name: {name}\n"
             "person:\n"
             "  name:\n"
             "    first: ''\n"
@@ -160,6 +203,7 @@ def career_init(params: dict, ctx=None, **kw) -> str:
 
     return json.dumps({
         "ok": True,
+        "name": name,
         "path": str(workspace.root),
         "career_profile": str(workspace.career_path),
         "next_question": ws_mod.CHECKLIST[0]["prompt"],
@@ -174,9 +218,21 @@ def career_init(params: dict, ctx=None, **kw) -> str:
     }, indent=2)
 
 
+def career_list(params: dict, ctx=None, **kw) -> str:
+    """List the career workspaces that live under the Hermes home."""
+    workspaces = list_workspaces()
+    return json.dumps({
+        "ok": True,
+        "hermes_home": str(hermes_home()),
+        "count": len(workspaces),
+        "workspaces": workspaces,
+    }, indent=2)
+
+
 def career_ingest(params: dict, ctx=None, **kw) -> str:
     """Store a source document in the workspace's immutable raw layer."""
-    workspace = _resolve_workspace(ctx, params.get("workspace"))
+    workspace = _resolve_workspace(ctx, params.get("workspace"),
+                                   params.get("name"))
     text = (params.get("text") or "").strip()
     source = (params.get("source") or "pasted document").strip()
 
@@ -267,7 +323,8 @@ def _merge_value(existing, patch):
 
 def career_profile(params: dict, ctx=None, **kw) -> str:
     """Read the profile, or update it with a partial document."""
-    workspace = _resolve_workspace(ctx, params.get("workspace"))
+    workspace = _resolve_workspace(ctx, params.get("workspace"),
+                                   params.get("name"))
     action = (params.get("action") or "read").strip().lower()
 
     try:
@@ -322,7 +379,8 @@ def career_profile(params: dict, ctx=None, **kw) -> str:
 
 def career_match(params: dict, ctx=None, **kw) -> str:
     """Match a job description against the profile and rank the entries."""
-    workspace = _resolve_workspace(ctx, params.get("workspace"))
+    workspace = _resolve_workspace(ctx, params.get("workspace"),
+                                   params.get("name"))
     jd_text = (params.get("job_description") or "").strip()
 
     if not jd_text:
@@ -369,7 +427,8 @@ def career_match(params: dict, ctx=None, **kw) -> str:
 
 def career_build(params: dict, ctx=None, **kw) -> str:
     """Render the profile into a LaTeX CV and compile it to PDF."""
-    workspace = _resolve_workspace(ctx, params.get("workspace"))
+    workspace = _resolve_workspace(ctx, params.get("workspace"),
+                                   params.get("name"))
 
     try:
         profile = workspace.load()
@@ -471,7 +530,8 @@ def career_build(params: dict, ctx=None, **kw) -> str:
 
 def career_templates(params: dict, ctx=None, **kw) -> str:
     """List the templates available, and the slots each one uses."""
-    workspace = _resolve_workspace(ctx, params.get("workspace"))
+    workspace = _resolve_workspace(ctx, params.get("workspace"),
+                                   params.get("name"))
     templates = discover_templates(*_shipped_template_roots(workspace))
     out = []
     for t in templates:
@@ -517,6 +577,19 @@ TOOLS = [
         "handler": career_init,
     },
     {
+        "name": "career_list",
+        "description": (
+            "List the career workspaces that live under the Hermes home, with "
+            "the name, path, and tagline of each. Use this to find the name to "
+            "pass to the other career tools."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {},
+        },
+        "handler": career_list,
+    },
+    {
         "name": "career_ingest",
         "description": (
             "Store a source document (a CV, a repo README, a project page) in the "
@@ -537,6 +610,7 @@ TOOLS = [
                     "description": "resume | repo | page | document | link",
                 },
                 "workspace": {"type": "string", "description": "Workspace path override."},
+                "name": {"type": "string", "description": "Workspace name."},
             },
             "required": ["text"],
         },
@@ -567,6 +641,7 @@ TOOLS = [
                     "description": "Top-level profile fields to merge in.",
                 },
                 "workspace": {"type": "string"},
+                "name": {"type": "string", "description": "Workspace name."},
             },
         },
         "handler": career_profile,
@@ -591,6 +666,7 @@ TOOLS = [
                     "description": "A name for this application, e.g. 'acme-senior-engineer'.",
                 },
                 "workspace": {"type": "string"},
+                "name": {"type": "string", "description": "Workspace name."},
             },
         },
         "handler": career_match,
@@ -635,6 +711,7 @@ TOOLS = [
             "type": "object",
             "properties": {
                 "workspace": {"type": "string"},
+                "name": {"type": "string", "description": "Workspace name."},
             },
         },
         "handler": career_templates,
@@ -652,7 +729,8 @@ def career_command(raw_args: str, ctx=None, **kw) -> str:
     if not args:
         return (
             "Career commands:\n"
-            "  /career init <path>   create a workspace\n"
+            "  /career init <name>   create a named workspace under the Hermes home\n"
+            "  /career list          list the workspaces under the Hermes home\n"
             "  /career status        show the workspace and intake progress\n"
             "  /career templates     list the available CV templates\n"
             "  /career build [target] render a CV (add --template <id>)\n"
@@ -664,7 +742,9 @@ def career_command(raw_args: str, ctx=None, **kw) -> str:
     rest = parts[1:]
 
     if verb == "init":
-        return career_init({"path": rest[0]} if rest else {}, ctx=ctx)
+        return career_init({"name": rest[0]} if rest else {}, ctx=ctx)
+    if verb == "list":
+        return career_list({}, ctx=ctx)
     if verb == "status":
         return _status(ctx)
     if verb == "templates":
@@ -700,7 +780,7 @@ def _status(ctx=None) -> str:
         return json.dumps({
             "ok": False,
             "workspace": str(workspace.root),
-            "message": "No workspace yet. Create one with /career init <path>.",
+            "message": "No workspace yet. Create one with /career init <name>.",
         }, indent=2)
 
     state = ws_mod.load_checklist(workspace)

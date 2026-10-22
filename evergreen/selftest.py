@@ -8,6 +8,7 @@ Run with the Hermes python (the one that has ruamel.yaml):
 from __future__ import annotations
 
 import json
+import os
 import re
 import sys
 import tempfile
@@ -301,205 +302,249 @@ def test_tools_end_to_end() -> int:
     """
     import json as _json
 
-    from . import (career_build, career_init, career_ingest, career_match,
-                   career_profile)
+    from . import (career_build, career_init, career_ingest, career_list,
+                   career_match, career_profile)
 
     failures = 0
     with tempfile.TemporaryDirectory() as tmp:
-        ws = str(Path(tmp) / "career")
-        from .career import Workspace
-        ws_obj = Workspace(Path(ws))
-
-        def check(label, condition, detail=""):
-            nonlocal failures
-            ok = bool(condition)
-            print(f"[{'PASS' if ok else 'FAIL'}] {label}"
-                  + (f" — {detail}" if detail and not ok else ""))
-            if not ok:
-                failures += 1
-            return ok
-
-        out = _json.loads(career_init({"path": ws}))
-        check("tools: init creates a workspace", out.get("ok"), str(out)[:200])
-        check("tools: init returns the first question",
-              bool(out.get("next_question")))
-
-        out = _json.loads(career_ingest({
-            "text": "Jane Doe, Senior Engineer. Built a CUDA renderer.",
-            "source": "https://example.com/cv", "kind": "resume",
-            "workspace": ws,
-        }))
-        check("tools: ingest stores a source", out.get("status") == "ingested",
-              str(out)[:200])
-        check("tools: ingest returns a hash", len(out.get("sha256", "")) == 64)
-
-        # Re-ingesting identical content must be a no-op, not a second file.
-        out2 = _json.loads(career_ingest({
-            "text": "Jane Doe, Senior Engineer. Built a CUDA renderer.",
-            "source": "https://example.com/cv", "kind": "resume",
-            "workspace": ws,
-        }))
-        check("tools: re-ingest is a no-op",
-              out2.get("status") == "unchanged", str(out2)[:200])
-
-        # A changed body must be stored as a NEW document, not overwrite.
-        out3 = _json.loads(career_ingest({
-            "text": "Jane Doe, Senior Engineer. Built a CUDA renderer. Now V2.",
-            "source": "https://example.com/cv", "kind": "resume",
-            "workspace": ws,
-        }))
-        check("tools: changed source becomes a new document",
-              out3.get("status") == "ingested"
-              and out3.get("path") != out.get("path"),
-              str(out3)[:200])
-
-        # The stored hashes must verify — a mismatch here means the hash and
-        # the written body disagree.
-        from .workspace import verify_raw
-        drift = [r for r in verify_raw(ws_obj) if r["status"] != "ok"]
-        check("tools: raw hashes verify (no phantom drift)", not drift,
-              str(drift)[:300])
-
-        patch = {
-            "person": {
-                "name": {"first": "Jane", "last": "Doe"},
-                "tagline": "Senior Graphics Engineer",
-                "summary": "Engineer who ships rendering systems.",
-                "email": "jane@example.com",
-                "location": "Portland, Oregon, USA",
-                "links": [{"label": "janedoe",
-                           "url": "https://github.com/janedoe",
-                           "icon": "github"}],
-            },
-            "experience": [{
-                "id": "acme", "role": "Senior Engineer", "org": "Acme Corp",
-                "location": "Remote", "start": "Mar 2020", "end": "Present",
-                "bullets": [{"text": "Built a **CUDA** rendering pipeline."}],
-                "tags": ["CUDA", "C++"], "priority": 90,
-            }],
-            "projects": [{"id": "tool", "title": "Toolkit", "date": "2023"}],
-            "education": [{"id": "state", "degree": "B.Sc. Computer Science",
-                           "org": "State University"}],
-            "skills": [{"label": "Languages", "items": ["C++", "Python"]}],
-            "milestones": [{"title": "Shipped it", "date": "2024",
-                            "icon": "trophy"}],
-        }
-        out = _json.loads(career_profile({
-            "action": "update", "patch": patch, "workspace": ws}))
-        check("tools: profile update succeeds", out.get("ok"), str(out)[:300])
-
-        out = _json.loads(career_profile({
-            "action": "read", "workspace": ws}))
-        check("tools: profile read returns the data",
-              out.get("career_profile", {}).get("person", {}).get("name", {}).get("first")
-              == "Jane", str(out)[:200])
-
-        # An invalid patch must be rejected, not written. Note this is a
-        # TYPE error, not a missing field: since patches now merge, a
-        # patch that omits a required field no longer invalidates the
-        # profile — it just leaves the field alone.
-        out = _json.loads(career_profile({
-            "action": "update", "workspace": ws,
-            "patch": {"person": {"name": {"first": 123, "last": "Doe"}}}}))
-        check("tools: invalid patch is rejected", "error" in out, str(out)[:200])
-        check("tools: an invalid patch says what is wrong",
-              bool(_json.loads(career_profile({
-                  "action": "update", "workspace": ws,
-                  "patch": {"person": {"name": {"first": 123, "last": "Doe"}}}}))
-                  .get("details")),
-              "the error carried no details")
-
-        # A patch must mean "change what I named". Patching one field of
-        # `person` must not drop the other fields — the whole-object
-        # replacement this used to do made every patch a full rewrite, and
-        # silently dropped required fields.
-        out = _json.loads(career_profile({
-            "action": "update", "workspace": ws,
-            "patch": {"person": {"tagline": "Senior Graphics Engineer"}}}))
-        check("tools: a partial person patch succeeds", out.get("ok"),
-              str(out)[:300])
-        person = _json.loads(career_profile({
-            "action": "read", "workspace": ws}))["career_profile"]["person"]
-        check("tools: a partial patch changes only what it names",
-              person.get("tagline") == "Senior Graphics Engineer"
-              and person.get("name", {}).get("first") == "Jane"
-              and person.get("email") == "jane@example.com",
-              str(person)[:300])
-
-        # A list of records merges by id; a list of values replaces.
-        out = _json.loads(career_profile({
-            "action": "update", "workspace": ws,
-            "patch": {"experience": [{"id": "acme", "role": "Staff Engineer"}]}}))
-        check("tools: an id-matched entry merges", out.get("ok"), str(out)[:200])
-        entries = _json.loads(career_profile({
-            "action": "read", "workspace": ws}))["career_profile"]["experience"]
-        check("tools: merging an entry keeps the other fields",
-              len(entries) == 1
-              and entries[0]["role"] == "Staff Engineer"
-              and entries[0]["org"] == "Acme Corp",
-              str(entries)[:300])
-
-        out = _json.loads(career_profile({
-            "action": "update", "workspace": ws,
-            "patch": {"skills": [{"label": "Only", "items": ["Rust"]}]}}))
-        entries = _json.loads(career_profile({
-            "action": "read", "workspace": ws}))["career_profile"]["skills"]
-        check("tools: an id-less list is replaced, not appended",
-              len(entries) == 1 and entries[0]["label"] == "Only",
-              str(entries)[:200])
-
-        # An unrelated file must not be mistaken for a career profile, and
-        # must not be overwritten.
-        foreign = Path(tmp) / "foreign"
-        foreign.mkdir()
-        (foreign / "career.yaml").write_text(
-            "name: someone\ndescription: not a career profile\n", encoding="utf-8")
-        out = _json.loads(career_init({"path": str(foreign)}))
-        check("tools: a foreign career.yaml is not a workspace",
-              "error" in out, str(out)[:200])
-        check("tools: a foreign career.yaml is not overwritten",
-              (foreign / "career.yaml").read_text(encoding="utf-8")
-              .startswith("name: someone"))
-
-        # A Hermes home must never be treated as a workspace, and a
-        # workspace must never be created inside one.
-        fake_home = Path(tmp) / "fakehermes"
+        # The workspace now lives directly under the Hermes home, so the
+        # test needs its own home - otherwise it writes into the real one.
+        fake_home = Path(tmp) / "hermes"
         fake_home.mkdir()
-        (fake_home / "profile.yaml").write_text("description: x\n", encoding="utf-8")
-        (fake_home / "state.db").write_text("", encoding="utf-8")
-        from .career import Workspace as _WS, find_workspace as _find
-        check("tools: a Hermes home is not a workspace",
-              not _WS(fake_home).exists())
-        out = _json.loads(career_init({"path": str(fake_home)}))
-        check("tools: a workspace is not created inside a Hermes home",
-              "error" in out, str(out)[:200])
-        check("tools: nothing was written into the Hermes home",
-              not (fake_home / "notes").exists()
-              and not (fake_home / "career.yaml").exists())
+        previous_home = os.environ.get("HERMES_HOME")
+        os.environ["HERMES_HOME"] = str(fake_home)
+        try:
+            failures += _run_tool_checks(fake_home)
+        finally:
+            if previous_home is None:
+                os.environ.pop("HERMES_HOME", None)
+            else:
+                os.environ["HERMES_HOME"] = previous_home
+    return failures
 
-        jd = ("We are hiring a CUDA rendering engineer. Requirements: C++, "
-              "GPU programming, Docker, Python. Nice to have: Vulkan.")
-        out = _json.loads(career_match({
-            "job_description": jd, "target": "acme", "workspace": ws}))
-        check("tools: match succeeds", out.get("ok"), str(out)[:200])
-        check("tools: match reports unmatched terms",
-              "vulkan" in out["report"]["unmatched_terms"],
-              str(out["report"]["unmatched_terms"]))
 
-        out = _json.loads(career_build({
-            "target": "acme", "template": "yaac", "workspace": ws}))
-        check("tools: targeted build succeeds", out.get("ok"), str(out)[:400])
-        check("tools: targeted build produces a PDF",
-              bool(out.get("pdf")) and Path(out["pdf"]).exists(),
-              str(out.get("pdf")))
-        check("tools: targeted build has pages",
-              (out.get("pages") or 0) >= 1, str(out.get("pages")))
+def _run_tool_checks(fake_home: Path) -> int:
+    """The tool-level end-to-end checks, against an isolated Hermes home."""
+    import json as _json
 
-        # The untargeted build must work too.
-        out = _json.loads(career_build({
-            "template": "plain", "workspace": ws}))
-        check("tools: untargeted build succeeds", out.get("ok"),
-              str(out)[:300])
+    from . import (career_build, career_init, career_ingest, career_list,
+                   career_match, career_profile)
+
+    failures = 0
+
+    def check(label, condition, detail=""):
+        nonlocal failures
+        ok = bool(condition)
+        print(f"[{'PASS' if ok else 'FAIL'}] {label}"
+              + (f" — {detail}" if detail and not ok else ""))
+        if not ok:
+            failures += 1
+        return ok
+
+    ws_name = "career"
+    ws = str(fake_home / ws_name)
+
+    out = _json.loads(career_init({"name": ws_name}))
+    check("tools: init creates a workspace", out.get("ok"), str(out)[:200])
+    check("tools: init returns the first question",
+          bool(out.get("next_question")))
+    check("tools: init places the workspace under the Hermes home",
+          out.get("path") == ws, f"{out.get('path')} != {ws}")
+    check("tools: init records the name in the career profile",
+          "name: career" in (Path(ws) / "career.yaml").read_text(encoding="utf-8"))
+
+    out = _json.loads(career_list({}))
+    check("tools: list finds the workspace",
+          any(w["name"] == ws_name for w in out.get("workspaces", [])),
+          str(out)[:200])
+
+    # A name that is not a safe path segment must be refused.
+    out = _json.loads(career_init({"name": "bad name!"}))
+    check("tools: an invalid name is refused", "error" in out, str(out)[:200])
+    out = _json.loads(career_init({"name": "../escape"}))
+    check("tools: a path traversal name is refused", "error" in out,
+          str(out)[:200])
+
+    out = _json.loads(career_ingest({
+        "text": "Jane Doe, Senior Engineer. Built a CUDA renderer.",
+        "source": "https://example.com/cv", "kind": "resume",
+        "workspace": ws,
+    }))
+    check("tools: ingest stores a source", out.get("status") == "ingested",
+          str(out)[:200])
+    check("tools: ingest returns a hash", len(out.get("sha256", "")) == 64)
+
+    # Re-ingesting identical content must be a no-op, not a second file.
+    out2 = _json.loads(career_ingest({
+        "text": "Jane Doe, Senior Engineer. Built a CUDA renderer.",
+        "source": "https://example.com/cv", "kind": "resume",
+        "workspace": ws,
+    }))
+    check("tools: re-ingest is a no-op",
+          out2.get("status") == "unchanged", str(out2)[:200])
+
+    # A changed body must be stored as a NEW document, not overwrite.
+    out3 = _json.loads(career_ingest({
+        "text": "Jane Doe, Senior Engineer. Built a CUDA renderer. Now V2.",
+        "source": "https://example.com/cv", "kind": "resume",
+        "workspace": ws,
+    }))
+    check("tools: changed source becomes a new document",
+          out3.get("status") == "ingested"
+          and out3.get("path") != out.get("path"),
+          str(out3)[:200])
+
+    # The stored hashes must verify — a mismatch here means the hash and
+    # the written body disagree.
+    from .workspace import verify_raw
+    from .career import Workspace as _WS
+    drift = [r for r in verify_raw(_WS(Path(ws))) if r["status"] != "ok"]
+    check("tools: raw hashes verify (no phantom drift)", not drift,
+          str(drift)[:300])
+
+    patch = {
+        "person": {
+            "name": {"first": "Jane", "last": "Doe"},
+            "tagline": "Senior Graphics Engineer",
+            "summary": "Engineer who ships rendering systems.",
+            "email": "jane@example.com",
+            "location": "Portland, Oregon, USA",
+            "links": [{"label": "janedoe",
+                       "url": "https://github.com/janedoe",
+                       "icon": "github"}],
+        },
+        "experience": [{
+            "id": "acme", "role": "Senior Engineer", "org": "Acme Corp",
+            "location": "Remote", "start": "Mar 2020", "end": "Present",
+            "bullets": [{"text": "Built a **CUDA** rendering pipeline."}],
+            "tags": ["CUDA", "C++"], "priority": 90,
+        }],
+        "projects": [{"id": "tool", "title": "Toolkit", "date": "2023"}],
+        "education": [{"id": "state", "degree": "B.Sc. Computer Science",
+                       "org": "State University"}],
+        "skills": [{"label": "Languages", "items": ["C++", "Python"]}],
+        "milestones": [{"title": "Shipped it", "date": "2024",
+                        "icon": "trophy"}],
+    }
+    out = _json.loads(career_profile({
+        "action": "update", "patch": patch, "workspace": ws}))
+    check("tools: profile update succeeds", out.get("ok"), str(out)[:300])
+
+    out = _json.loads(career_profile({
+        "action": "read", "workspace": ws}))
+    check("tools: profile read returns the data",
+          out.get("career_profile", {}).get("person", {}).get("name", {}).get("first")
+          == "Jane", str(out)[:200])
+
+    # An invalid patch must be rejected, not written. Note this is a
+    # TYPE error, not a missing field: since patches now merge, a
+    # patch that omits a required field no longer invalidates the
+    # profile — it just leaves the field alone.
+    out = _json.loads(career_profile({
+        "action": "update", "workspace": ws,
+        "patch": {"person": {"name": {"first": 123, "last": "Doe"}}}}))
+    check("tools: invalid patch is rejected", "error" in out, str(out)[:200])
+    check("tools: an invalid patch says what is wrong",
+          bool(_json.loads(career_profile({
+              "action": "update", "workspace": ws,
+              "patch": {"person": {"name": {"first": 123, "last": "Doe"}}}}))
+              .get("details")),
+          "the error carried no details")
+
+    # A patch must mean "change what I named". Patching one field of
+    # `person` must not drop the other fields — the whole-object
+    # replacement this used to do made every patch a full rewrite, and
+    # silently dropped required fields.
+    out = _json.loads(career_profile({
+        "action": "update", "workspace": ws,
+        "patch": {"person": {"tagline": "Senior Graphics Engineer"}}}))
+    check("tools: a partial person patch succeeds", out.get("ok"),
+          str(out)[:300])
+    person = _json.loads(career_profile({
+        "action": "read", "workspace": ws}))["career_profile"]["person"]
+    check("tools: a partial patch changes only what it names",
+          person.get("tagline") == "Senior Graphics Engineer"
+          and person.get("name", {}).get("first") == "Jane"
+          and person.get("email") == "jane@example.com",
+          str(person)[:300])
+
+    # A list of records merges by id; a list of values replaces.
+    out = _json.loads(career_profile({
+        "action": "update", "workspace": ws,
+        "patch": {"experience": [{"id": "acme", "role": "Staff Engineer"}]}}))
+    check("tools: an id-matched entry merges", out.get("ok"), str(out)[:200])
+    entries = _json.loads(career_profile({
+        "action": "read", "workspace": ws}))["career_profile"]["experience"]
+    check("tools: merging an entry keeps the other fields",
+          len(entries) == 1
+          and entries[0]["role"] == "Staff Engineer"
+          and entries[0]["org"] == "Acme Corp",
+          str(entries)[:300])
+
+    out = _json.loads(career_profile({
+        "action": "update", "workspace": ws,
+        "patch": {"skills": [{"label": "Only", "items": ["Rust"]}]}}))
+    entries = _json.loads(career_profile({
+        "action": "read", "workspace": ws}))["career_profile"]["skills"]
+    check("tools: an id-less list is replaced, not appended",
+          len(entries) == 1 and entries[0]["label"] == "Only",
+          str(entries)[:200])
+
+    # An unrelated file must not be mistaken for a career profile, and
+    # must not be overwritten.
+    foreign = fake_home / "foreign"
+    foreign.mkdir()
+    (foreign / "career.yaml").write_text(
+        "name: someone\ndescription: not a career profile\n", encoding="utf-8")
+    out = _json.loads(career_init({"name": "foreign"}))
+    check("tools: a foreign career.yaml is not a workspace",
+          "error" in out, str(out)[:200])
+    check("tools: a foreign career.yaml is not overwritten",
+          (foreign / "career.yaml").read_text(encoding="utf-8")
+          .startswith("name: someone"))
+
+    # The Hermes home itself must never be treated as a workspace.
+    from .career import Workspace as _WS2
+    check("tools: a Hermes home is not a workspace",
+          not _WS2(fake_home).exists())
+
+    # A name that collides with something Hermes owns must be refused.
+    (fake_home / "plugins").mkdir()
+    out = _json.loads(career_init({"name": "plugins"}))
+    check("tools: a name colliding with a Hermes directory is refused",
+          "error" in out, str(out)[:200])
+    check("tools: the colliding directory was not touched",
+          (fake_home / "plugins").is_dir()
+          and not (fake_home / "plugins" / "career.yaml").exists())
+
+    # The Hermes home must not be polluted with workspace files.
+    check("tools: nothing was written directly into the Hermes home",
+          not (fake_home / "career.yaml").exists()
+          and not (fake_home / "notes").exists())
+
+    jd = ("We are hiring a CUDA rendering engineer. Requirements: C++, "
+          "GPU programming, Docker, Python. Nice to have: Vulkan.")
+    out = _json.loads(career_match({
+        "job_description": jd, "target": "acme", "workspace": ws}))
+    check("tools: match succeeds", out.get("ok"), str(out)[:200])
+    check("tools: match reports unmatched terms",
+          "vulkan" in out["report"]["unmatched_terms"],
+          str(out["report"]["unmatched_terms"]))
+
+    out = _json.loads(career_build({
+        "target": "acme", "template": "yaac", "workspace": ws}))
+    check("tools: targeted build succeeds", out.get("ok"), str(out)[:400])
+    check("tools: targeted build produces a PDF",
+          bool(out.get("pdf")) and Path(out["pdf"]).exists(),
+          str(out.get("pdf")))
+    check("tools: targeted build has pages",
+          (out.get("pages") or 0) >= 1, str(out.get("pages")))
+
+    # The untargeted build must work too.
+    out = _json.loads(career_build({
+        "template": "plain", "workspace": ws}))
+    check("tools: untargeted build succeeds", out.get("ok"),
+          str(out)[:300])
 
     print()
     if failures:

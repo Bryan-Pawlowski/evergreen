@@ -11,6 +11,7 @@ tags:
   - latex
 provides_tools:
   - career_init
+  - career_list
   - career_ingest
   - career_profile
   - career_match

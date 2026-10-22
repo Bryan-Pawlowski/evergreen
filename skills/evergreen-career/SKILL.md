@@ -34,7 +34,13 @@ truth. A change to what a CV shows is a change to the profile (or to a
 
 ### 1. Intake (once per workspace)
 
-`career_init <path>` creates the workspace and returns the first question.
+`career_init <name>` creates the workspace and returns the first question.
+The name becomes a directory directly under the Hermes home (one level
+deeper than the home itself), so `career_init jane` creates
+`<hermes home>/jane/`. The name is recorded in the career profile, so it
+travels with the data if the workspace is moved or copied. Use
+`career_list` to see the workspaces that exist.
+
 Walk the checklist; it is ordered, because early answers inform later ones:
 
 1. **Name and headline** — the name on the CV, and the one-line role summary.

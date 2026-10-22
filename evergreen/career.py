@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from pathlib import Path
 from typing import Any
 
@@ -244,6 +245,16 @@ class CareerProfile:
     def person(self) -> dict:
         return self.data.get("person") or {}
 
+    @property
+    def workspace_name(self) -> str | None:
+        """The name this workspace was created under.
+
+        It lives in the career profile rather than in a registry, so it
+        travels with the data if the workspace is moved or copied.
+        """
+        value = self.data.get("name")
+        return str(value) if value else None
+
     def entries(self, slot: str) -> list[dict]:
         """Return the profile entries for a slot, in profile order."""
         if slot == "identity":
@@ -393,6 +404,110 @@ def _today() -> str:
     return datetime.date.today().isoformat()
 
 
+# --------------------------------------------------------------------------
+# Workspace names
+# --------------------------------------------------------------------------
+
+# A workspace name becomes a directory name directly under the Hermes home,
+# so it must be a safe single path segment.
+_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9._-]{0,63}$")
+
+# Names Hermes itself owns. A workspace placed directly under the Hermes home
+# would sit alongside these, and taking one of their names would either
+# collide with live state or shadow a directory Hermes expects to be there.
+_RESERVED_NAMES = {
+    "assets", "attachments", "audio_cache", "auth.json", "auth.lock",
+    "backups", "bin", "bootstrap-cache", "bot_relay", "cache", "config.yaml",
+    "cron", "desktop", "desktop-plugins", "environments", "gateway.lock",
+    "gateway.pid", "gateway_state.json", "gateway-service", "hooks",
+    "image_cache", "images", "installs", "kanban", "locks", "logs", "lsp",
+    "memories", "pairing", "pending", "platforms", "plugins",
+    "plugin-data", "plugin-update-checks", "processes.json", "profile.yaml",
+    "profiles", "projects.db", "runtime", "sandboxes", "scripts", "sessions",
+    "skills", "skins", "soul.md", "state", "state.db",
+    "telemetry", "terminal-sessions", "tools", "vault",
+}
+
+
+def validate_workspace_name(name: str) -> str:
+    """Validate a workspace name and return it normalised.
+
+    The name becomes a directory directly under the Hermes home, so it has
+    to be one safe path segment and must not shadow something Hermes owns.
+    """
+    if not name or not name.strip():
+        raise CareerProfileError("A workspace name is required.")
+    candidate = name.strip().lower()
+
+    if not _NAME_RE.match(candidate):
+        raise CareerProfileError(
+            f"Invalid workspace name {name!r}. Use lowercase letters, digits, "
+            f"dot, dash, or underscore, starting with a letter or digit "
+            f"(max 64 characters)."
+        )
+    if candidate in {".", ".."}:
+        raise CareerProfileError(f"Invalid workspace name {name!r}.")
+    if candidate in _RESERVED_NAMES:
+        raise CareerProfileError(
+            f"The name {name!r} is used by Hermes itself. Pick another name "
+            f"for the workspace."
+        )
+    return candidate
+
+
+def hermes_home() -> Path:
+    """The active Hermes home, as the plugin sees it.
+
+    ``hermes_constants.get_hermes_home`` resolves the *active* profile's
+    home, so a workspace created from one profile does not leak into
+    another's. Falls back to the environment when the module is not
+    importable (a standalone checkout of this plugin).
+    """
+    try:
+        from hermes_constants import get_hermes_home  # type: ignore
+        return Path(get_hermes_home())
+    except Exception:
+        pass
+    env = os.environ.get("HERMES_HOME", "").strip()
+    if env:
+        return Path(os.path.expanduser(os.path.expandvars(env)))
+    return Path.home() / ".hermes"
+
+
+def workspace_path_for_name(name: str) -> Path:
+    """The path a named workspace occupies: ``<hermes home>/<name>/``."""
+    return hermes_home() / validate_workspace_name(name)
+
+
+def list_workspaces() -> list[dict]:
+    """Every career workspace sitting directly under the Hermes home.
+
+    A directory qualifies when it holds a career profile. Hermes' own
+    directories are skipped, so a stray ``config.yaml`` elsewhere in the
+    home is never mistaken for a workspace.
+    """
+    home = hermes_home()
+    found: list[dict] = []
+    if not home.is_dir():
+        return found
+    for child in sorted(home.iterdir()):
+        if not child.is_dir() or child.name in _RESERVED_NAMES:
+            continue
+        workspace = Workspace(child)
+        if not workspace.exists():
+            continue
+        try:
+            profile = workspace.load()
+        except CareerProfileError:
+            continue
+        found.append({
+            "name": profile.workspace_name or child.name,
+            "path": str(child),
+            "tagline": profile.person.get("tagline") or "",
+        })
+    return found
+
+
 def find_workspace(start: Path | None = None) -> Workspace | None:
     """Walk up from ``start`` looking for an existing workspace."""
     current = Path(start or os.getcwd()).resolve()
@@ -411,6 +526,10 @@ __all__ = [
     "SLOTS",
     "dump_structured",
     "find_workspace",
+    "hermes_home",
+    "list_workspaces",
     "load_structured",
     "validate",
+    "validate_workspace_name",
+    "workspace_path_for_name",
 ]

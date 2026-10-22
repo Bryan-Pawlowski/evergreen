@@ -8,6 +8,11 @@
   "additionalProperties": false,
   "properties": {
     "schema_version": { "const": 1 },
+    "name": {
+      "description": "The name this workspace was created under. It lives in the career profile rather than in a registry, so it travels with the data if the workspace is moved or copied.",
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9._-]{0,63}$"
+    },
     "person": {
       "type": "object",
       "required": ["name", "tagline"],
