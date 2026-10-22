@@ -357,6 +357,10 @@ def _run_tool_checks(fake_home: Path) -> int:
     check("tools: list finds the workspace",
           any(w["name"] == ws_name for w in out.get("workspaces", [])),
           str(out)[:200])
+    check("tools: list reports the profile status",
+          any(w.get("profile_status") == "valid"
+              for w in out.get("workspaces", [])),
+          str(out)[:200])
 
     # A name that is not a safe path segment must be refused.
     out = _json.loads(career_init({"name": "bad name!"}))
@@ -524,6 +528,8 @@ def _run_tool_checks(fake_home: Path) -> int:
 
     # With no name, no configured path, and no walk-up hit, the resolver
     # must land on a workspace that exists rather than on a stale path.
+    # Do this before adding the "broken" fixture, so there is exactly one
+    # workspace to resolve to.
     from . import _resolve_workspace
     resolved = _resolve_workspace(None)
     check("tools: the resolver finds the single workspace by default",
@@ -531,6 +537,33 @@ def _run_tool_checks(fake_home: Path) -> int:
     resolved = _resolve_workspace(None, name=ws_name)
     check("tools: the resolver finds a workspace by name",
           str(resolved.root) == ws, str(resolved.root))
+
+    # A workspace whose profile does not validate must still be listed.
+    # Hiding it would make the tool that exists to FIND workspaces unable
+    # to find one that is merely unpolished - and the caller needs to know
+    # it exists in order to repair it.
+    broken = fake_home / "broken"
+    broken.mkdir()
+    (broken / "career.yaml").write_text(
+        "schema_version: 1\n"
+        "name: broken\n"
+        "person:\n"
+        "  name:\n"
+        "    first: 123\n"
+        "    last: Doe\n"
+        "  tagline: ''\n",
+        encoding="utf-8")
+    out = _json.loads(career_list({}))
+    listed = {w["name"]: w for w in out.get("workspaces", [])}
+    check("tools: an invalid workspace is still listed",
+          "broken" in listed, str(sorted(listed)))
+    check("tools: an invalid workspace is flagged as invalid",
+          listed.get("broken", {}).get("profile_status") == "invalid",
+          str(listed.get("broken"))[:200])
+    check("tools: an invalid workspace explains itself",
+          bool(listed.get("broken", {}).get("profile_error")),
+          str(listed.get("broken"))[:200])
+
 
     jd = ("We are hiring a CUDA rendering engineer. Requirements: C++, "
           "GPU programming, Docker, Python. Nice to have: Vulkan.")

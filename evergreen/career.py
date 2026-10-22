@@ -485,6 +485,11 @@ def list_workspaces() -> list[dict]:
     A directory qualifies when it holds a career profile. Hermes' own
     directories are skipped, so a stray ``config.yaml`` elsewhere in the
     home is never mistaken for a workspace.
+
+    A workspace whose profile does not fully validate is still listed,
+    with ``profile_status`` saying so. Hiding it would make this the one
+    tool that cannot find a workspace: the profile may be half-filled
+    mid-edit, and the caller needs to know it exists in order to fix it.
     """
     home = hermes_home()
     found: list[dict] = []
@@ -498,12 +503,23 @@ def list_workspaces() -> list[dict]:
             continue
         try:
             profile = workspace.load()
-        except CareerProfileError:
+        except CareerProfileError as exc:
+            # The profile is recognisably a career profile (exists() checked
+            # that structurally) but does not validate. Report it rather
+            # than dropping it.
+            found.append({
+                "name": child.name,
+                "path": str(child),
+                "tagline": "",
+                "profile_status": "invalid",
+                "profile_error": str(exc),
+            })
             continue
         found.append({
             "name": profile.workspace_name or child.name,
             "path": str(child),
             "tagline": profile.person.get("tagline") or "",
+            "profile_status": "valid",
         })
     return found
 
