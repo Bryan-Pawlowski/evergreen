@@ -50,10 +50,110 @@ jobs:
       - name: Check for leaked personal data
         run: python scripts/check_no_user_data.py
 
+      # The .gitattributes declares eol=lf, but git only normalizes a file that
+      # entered the index already in LF. A file committed with CRLF keeps it,
+      # and every later checkout on Linux/macOS gets mixed endings that break
+      # diff noise and the selftest's byte-comparisons. Cheap guard.
+      - name: Check line endings (no CRLF in tracked text)
+        run: python scripts/check_line_endings.py
+
+  ruff:
+    # pyflakes for real defects: undefined names, imports that never resolve,
+    # shadowed variables, duplicate dict keys. The first catch (a ProfileError
+    # referenced but never defined in career.py) was a live NameError that
+    # fired on a corrupt profile. Kept as its own fast job so a typo fails in
+    # seconds rather than after the slower jobs spend minutes.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # Pinned to the version the ruleset was authored against, so a ruff
+      # release that re-codes a rule cannot silently flip the gate.
+      - name: Install ruff
+        run: python -m pip install ruff==0.12.0
+
+      - name: Lint (pyflakes)
+        run: ruff check .
+
+      # A linter that cannot fail is not a linter. Plant an undefined name and
+      # assert ruff rejects it, then remove it so the real tree stays clean.
+      - name: The linter must reject a planted defect
+        run: |
+          printf 'def _probe():\n    return HERMES_GHOST_NAME\n' > _ruff_probe.py
+          if ruff check _ruff_probe.py; then
+            echo "FAIL: ruff passed a planted undefined name"
+            exit 1
+          fi
+          rm -f _ruff_probe.py
+          echo "OK: ruff caught the planted defect"
+
+  render-parity:
+    # Proves every shipped template's content reaches the PDF's *text layer*.
+    # The selftest asserts a PDF with pages exists but never reads the text
+    # back, so a template could compile to a visually-empty PDF and pass. This
+    # builds each template, extracts its text, and asserts every slot it
+    # declares carries its content (casefolded, and scoped to declared slots so
+    # a template that intentionally omits one — plain has no languages — is not
+    # penalised). The compiled PDFs are uploaded as an artifact for inspection.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install tectonic
+        run: |
+          set -euo pipefail
+          TECTONIC_VERSION=0.17.0
+          URL="https://github.com/tectonic-typesetting/tectonic/releases/download/tectonic%40${TECTONIC_VERSION}/tectonic-${TECTONIC_VERSION}-x86_64-unknown-linux-gnu.tar.gz"
+          curl -fsSL -o tectonic.tar.gz "$URL"
+          tar -xzf tectonic.tar.gz
+          sudo mv tectonic /usr/local/bin/tectonic
+          chmod +x /usr/local/bin/tectonic
+          tectonic --version
+
+      # poppler gives pdftotext (the preferred extractor); pymupdf is the
+      # fallback so the job works on a runner with either.
+      - name: Install Python dependencies and PDF text extraction
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install ruamel.yaml jsonschema pymupdf
+          sudo apt-get update
+          sudo apt-get install -y poppler-utils
+          pdftotext -v || true
+
+      - name: Prove every template's content reaches the PDF
+        run: python scripts/check_render_parity.py --out parity_pdfs
+
+      # The check must be able to fail: prove it passes on the good templates
+      # and fails on a profile with a dropped field (a valid, paged PDF with
+      # missing text — the exact gap it closes).
+      - name: The render-parity check must reject a template that drops content
+        run: python scripts/test_render_parity_teeth.py
+
+      - name: Upload the compiled PDFs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: render-parity-pdfs
+          path: parity_pdfs/*.pdf
+          if-no-files-found: warn
+          retention-days: 7
+
   negative-tests:
     # The checks must be able to FAIL. A check that cannot fail is not a
-    # check, so plant a leak and a broken manifest and assert both are
-    # rejected.
+    # check, so plant a leak, a broken manifest, and a CRLF file, and assert
+    # all three are rejected. (The render-parity check's own teeth live in its
+    # job, since they need tectonic; this job keeps the fast, dependency-light
+    # teeth.)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -93,3 +193,14 @@ jobs:
           cp /tmp/plugin.yaml.bak plugin.yaml
           python scripts/check_manifest.py
           echo "OK: the manifest check caught the broken manifest"
+
+      # The line-ending check needs git (for ls-files) but not tectonic.
+      - name: The line-ending check must reject a planted CRLF file
+        run: |
+          printf 'line one\r\nline two\r\n' > CRLFTEST.md
+          git add CRLFTEST.md
+          if python scripts/check_line_endings.py --staged; then
+            echo "FAIL: the line-ending check passed a planted CRLF file"
+            exit 1
+          fi
+          echo "OK: the line-ending check caught the planted CRLF file"

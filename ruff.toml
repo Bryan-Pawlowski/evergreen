@@ -1,0 +1,22 @@
+# Lint config for the evergreen plugin.
+#
+# The gate runs only the `F` (pyflakes) rules: undefined names (F821), imports
+# that never resolve (F401), shadowed variables (F811/F841), duplicate dict
+# keys (F601), and friends. These are the rules that catch *real* defects —
+# the first one (a `ProfileError` referenced but never defined in
+# `career.py`) was a live NameError that fired on a corrupt profile. Ruff earns
+# its CI slot on these.
+#
+# Line length (E501) and the broader `E` set are deliberately NOT enforced: the
+# codebase predates any line-length discipline, and switching it on would force
+# a reflow across every module rather than catching a defect. If a line-length
+# rule is wanted, add "E501" to `select` and run `ruff check --fix`.
+#
+# `F401` (unused import) is on. The intentional re-exports in
+# `evergreen/__init__.py` are marked `# noqa: F401  (re-exported)`, so they stay
+# public API while genuinely dead imports still fail.
+
+target-version = "py312"
+
+[lint]
+select = ["F"]
