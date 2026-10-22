@@ -660,10 +660,76 @@ def test_cli_surface() -> int:
     return 0
 
 
+def test_schema_matches_handlers() -> int:
+    """Every declared tool parameter must be one the handler reads.
+
+    The tool schemas and the handlers are written separately, and a
+    parameter that drifts out of one of them is invisible until an agent
+    calls the tool and gets an error it cannot diagnose. The `career_init`
+    schema once still declared `path` after the handler had moved to
+    `name`; the agent had to work around it.
+    """
+    import inspect
+
+    from . import TOOLS
+
+    failures = 0
+
+    def check(label, condition, detail=""):
+        nonlocal failures
+        ok = bool(condition)
+        print(f"[{'PASS' if ok else 'FAIL'}] {label}"
+              + (f" — {detail}" if detail and not ok else ""))
+        if not ok:
+            failures += 1
+        return ok
+
+    for tool in TOOLS:
+        name = tool["name"]
+        declared = set(tool["parameters"].get("properties", {}))
+        required = set(tool["parameters"].get("required", []))
+
+        source = inspect.getsource(tool["handler"])
+        read = set(re.findall(r'params\.get\(\s*"([a-z_]+)"', source))
+
+        # A declared parameter the handler never reads is dead weight the
+        # model will fill in and the handler will ignore.
+        unread = declared - read
+        check(f"schema[{name}]: every declared parameter is read",
+              not unread, f"never read: {sorted(unread)}")
+
+        # A required parameter the handler does not read is a trap: the
+        # model is required to send something that goes nowhere.
+        check(f"schema[{name}]: no required parameter is unread",
+              not (required & unread), f"unread but required: {sorted(required & unread)}")
+
+        # Required parameters must exist in the schema.
+        check(f"schema[{name}]: every required parameter is declared",
+              required <= declared, f"undeclared: {sorted(required - declared)}")
+
+    # The tools that resolve a workspace must all accept a name, since
+    # the name is how a workspace is addressed.
+    for tool in TOOLS:
+        if tool["name"] in {"career_init", "career_list"}:
+            continue
+        declared = set(tool["parameters"].get("properties", {}))
+        check(f"schema[{tool['name']}]: accepts a workspace name",
+              "name" in declared, str(sorted(declared)))
+
+    print()
+    if failures:
+        print(f"{failures} schema check(s) FAILED")
+        return 1
+    print("all schema checks passed")
+    return 0
+
+
 if __name__ == "__main__":
     rc = main()
     if rc == 0:
         rc = test_tools_end_to_end()
     if rc == 0:
         rc = test_cli_surface()
+    if rc == 0:
+        rc = test_schema_matches_handlers()
     sys.exit(rc)

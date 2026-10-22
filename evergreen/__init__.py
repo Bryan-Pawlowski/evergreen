@@ -567,22 +567,27 @@ TOOLS = [
     {
         "name": "career_init",
         "description": (
-            "Create a career workspace at a path the user chooses. The workspace "
-            "holds career.yaml (the structured source of truth), notes/ (prose "
-            "nuance), raw/ (immutable ingested sources), targets/ (per-job match "
-            "results), out/ (rendered PDFs) and templates.local/ (the user's own "
-            "LaTeX templates). Returns the first intake question. Use this once "
-            "at the start of a career conversation."
+            "Create a named career workspace. The name becomes a directory "
+            "directly under the Hermes home (one level deeper than the home "
+            "itself), e.g. the name 'jane' creates <hermes home>/jane/. The "
+            "workspace holds career.yaml (the structured source of truth), "
+            "notes/ (prose nuance), raw/ (immutable ingested sources), targets/ "
+            "(per-job match results), out/ (rendered PDFs) and templates.local/ "
+            "(the user's own LaTeX templates). The name is recorded in the "
+            "career profile, so it travels with the data. Returns the first "
+            "intake question. Use this once at the start of a career "
+            "conversation."
         ),
         "parameters": {
             "type": "object",
             "properties": {
-                "path": {
+                "name": {
                     "type": "string",
-                    "description": "Directory to create the workspace in.",
+                    "description": "Short name for the workspace: lowercase "
+                                   "letters, digits, dot, dash, underscore.",
                 },
             },
-            "required": ["path"],
+            "required": ["name"],
         },
         "handler": career_init,
     },
@@ -701,6 +706,7 @@ TOOLS = [
                     "description": "A saved match report to tailor against.",
                 },
                 "workspace": {"type": "string"},
+                "name": {"type": "string", "description": "Workspace name."},
                 "keep_workdir": {
                     "type": "boolean",
                     "description": "Keep the LaTeX build directory for debugging.",
