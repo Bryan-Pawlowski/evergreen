@@ -28,17 +28,31 @@ fail() {
     exit 1
 }
 
-# Resolve a Python interpreter the same way the pre-commit hook does.
+# Resolve a Python interpreter.
+#
+# The selftest needs ruamel.yaml (the Hermes runtime ships it). A bare
+# "python3"/"python" can resolve to an interpreter without it — on this
+# host it is the Windows Store stub — and then the selftest would fail
+# for the environment, not the code, and the hook would refuse a good
+# push. So each candidate must actually be able to import the parser;
+# the first that can wins. The leak and line-ending checkers are
+# stdlib-only and run under whatever is resolved.
 PY=""
 for candidate in "${HERMES_PYTHON:-}" python3 python; do
-    if [ -n "$candidate" ] && command -v "$candidate" >/dev/null 2>&1; then
+    [ -n "$candidate" ] || continue
+    command -v "$candidate" >/dev/null 2>&1 || continue
+    if "$candidate" -c "import ruamel.yaml" >/dev/null 2>&1; then
         PY="$candidate"
+        break
+    fi
+    if "$candidate" -c "import yaml" >/dev/null 2>&1; then
+        PY="$candidate"   # PyYAML works too; career.py falls back to it
         break
     fi
 done
 
 if [ -z "$PY" ]; then
-    echo "pre-push: no python interpreter found; skipping local checks." >&2
+    echo "pre-push: no python interpreter with a YAML parser found; skipping local checks." >&2
     echo "(CI will still run them on the pushed commits.)" >&2
     exit 0
 fi
