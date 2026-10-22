@@ -1,6 +1,6 @@
 # Evergreen
 
-[![CI](https://github.com/Bryan-Pawlowski/evergreen/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/Bryan-Pawlowski/evergreen/actions/workflows/ci.yml)
+[![CI](https://github.com/Bryan-Pawlowski/evergreen/actions/workflows/ci.yml/badge.svg?branch=stable)](https://github.com/Bryan-Pawlowski/evergreen/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Hermes](https://img.shields.io/badge/hermes-%3E%3D0.22.0-6d4aff.svg)](https://github.com/NousResearch/hermes-agent)
 [![Python](https://img.shields.io/badge/python-3.9%2B-3776ab.svg)](https://www.python.org/)
@@ -38,10 +38,12 @@ hermes plugins install Bryan-Pawlowski/evergreen
 hermes plugins enable evergreen
 ```
 
-That tracks `main` — a commit that is still failing its CI checks is
-reachable to new installs until the fix lands. For a stable install, pin
-the last commit whose checks were all green — the SHA below is updated
-each time a verified-good commit lands:
+That checks out `stable`, the repository's default branch — the release
+channel. Every commit there passed its CI checks (leak, lint, render
+parity, negative tests) before it was pushed, and the repository
+protection keeps force-push and history deletion off the branch.
+
+To pin a specific revision instead, use its commit SHA:
 
 ```bash
 hermes plugins install Bryan-Pawlowski/evergreen --ref d168975dc8f93820ef02de6f677dce158f88be5f
@@ -221,6 +223,7 @@ honest.
 ## Development
 
 ```bash
+git config core.hooksPath .githooks   # once, per clone: the local gate
 python -m evergreen.selftest
 ```
 
@@ -228,6 +231,15 @@ The selftest exercises the whole pipeline: markup escaping, profile
 validation, the matcher, slot rendering, and a real tectonic compile of
 every shipped template (asserting the PDF exists, has a page count, and has
 no overfull boxes).
+
+**Branch model.** `main` is the development branch; `stable` is the release
+channel (the repository's default branch, which is what
+`hermes plugins install` checks out). Development happens on `main` with
+normal pushes — CI witnesses every commit but does not gate a direct push.
+Releasing is deliberate: once a commit on `main` is green, push it to
+`stable`, where the pre-push hook runs the same checks locally and the
+repository protection blocks a push whose history would be rewritten.
+`stable` should always be a descendant of `main`'s last release.
 
 ## Licence
 

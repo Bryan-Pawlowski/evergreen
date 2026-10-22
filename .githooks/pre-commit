@@ -24,7 +24,7 @@ fi
 # Prefer the interpreter the repo was developed with; fall back to python3,
 # then python.
 PY=""
-for candidate in "$HERMES_PYTHON" python3 python; do
+for candidate in "${HERMES_PYTHON:-}" python3 python; do
     if [ -n "$candidate" ] && command -v "$candidate" >/dev/null 2>&1; then
         PY="$candidate"
         break

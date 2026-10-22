@@ -1,10 +1,12 @@
 name: CI
 
+# `stable` is the distribution branch (what `hermes plugins install` follows);
+# `main` is the dev branch. CI runs on both so a commit is witnessed on each.
 on:
   push:
-    branches: [main]
+    branches: [main, stable]
   pull_request:
-    branches: [main]
+    branches: [main, stable]
 
 jobs:
   verify:

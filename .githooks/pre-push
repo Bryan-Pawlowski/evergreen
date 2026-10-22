@@ -1,10 +1,10 @@
 #!/bin/sh
 # Pre-push hook: refuse to push a commit that would go red on the remote.
 #
-# Required-status-checks gates MERGES into main, not direct pushes — GitHub
-# cannot run checks before the code exists. This hook runs the same checks CI
-# runs, *before* the push leaves, so a broken commit never lands on main to
-# show up as a red badge for every installer. It mirrors the four CI jobs:
+# The repo's distribution channel is `stable`; `main` is the dev branch.
+# This hook runs the same checks CI runs, *before* the push leaves, so a
+# broken commit never lands on `stable` to reach an installer. It mirrors
+# the four CI jobs:
 #   check_no_user_data  (leak: no personal emails/paths)
 #   check_line_endings  (CRLF guard)
 #   ruff check          (pyflakes, pinned to the CI version)
@@ -30,7 +30,7 @@ fail() {
 
 # Resolve a Python interpreter the same way the pre-commit hook does.
 PY=""
-for candidate in "$HERMES_PYTHON" python3 python; do
+for candidate in "${HERMES_PYTHON:-}" python3 python; do
     if [ -n "$candidate" ] && command -v "$candidate" >/dev/null 2>&1; then
         PY="$candidate"
         break
