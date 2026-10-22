@@ -216,3 +216,37 @@ A second trap: with a gateway running, a session in one profile can be
 served the plugin copy of another — the gateway caches one module per
 plugin name. When a test profile behaves differently from the default
 profile, check which copy is actually loaded before believing the result.
+
+## The tool schema and the handler are written separately
+
+A tool's declared schema (the JSON the model sees) and the handler that
+reads `params` are two separate pieces of text. When one changes and the
+other does not, the model sends exactly what the schema says, the handler
+reads a different key, and the tool fails with an error the model cannot
+diagnose — it will guess, retry, and often report the tool as broken.
+
+This happened for real: `career_init`'s schema still declared `path`
+after the handler had moved to `name`. The agent sent a path, got "A
+workspace name is required", worked around it, and reported the mismatch
+in its answer. The bug was invisible in the tests because the tests
+called the handler directly and never went through the schema.
+
+**Rule: change a tool's parameters in the schema *and* the handler
+together, and let the selftest check it.** `test_schema_matches_handlers`
+asserts that every declared parameter is read by its handler, that no
+required parameter goes unread, and that every workspace-resolving tool
+accepts a `name`. It is verified to fail when the drift is reintroduced.
+
+**Rule: exercise a tool change through a real agent turn, not just the
+selftest.** The selftest calls handlers directly; only a live agent goes
+through the declared schema. A tool change is not done until an agent has
+called it without a workaround.
+
+The same trap has a second face in the CLI. `setup_fn` receives the
+`ArgumentParser` Hermes created for the command, and `handler_fn` is
+called with the *parsed namespace* — it does not receive argv to re-parse.
+A CLI wired to the wrong contract still passes a manifest check and
+still registers; `hermes career list` simply fails with "unrecognized
+arguments". `test_cli_surface` builds the parser the way Hermes does and
+calls the handler the way Hermes does, so this cannot drift silently
+either.
