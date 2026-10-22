@@ -142,15 +142,33 @@ These forks were decided and are no longer open:
   manifest check + leak check) and the `negative-tests` job (plant a
   leak, plant a broken manifest, assert both are rejected).
 - ☑ **The git-URL install path works** from a clean state.
-- ☐ **Clean-profile test**: create a throwaway Hermes *profile* (not just
-  a clean plugin install) and run `/career init` → `/career build` with
-  no local state. The install path is proven; the "no local state" path
-  is not.
+- ☑ **The clean-profile test passed** (2026-10-22). A throwaway profile
+  `egtest` was created, the plugin was installed into it from the git URL
+  (the clone copied an `evergreen/` dir, which was removed so the install
+  was genuine), and a real agent turn drove `career_init` →
+  `career_profile` → `career_build` to a valid one-page PDF. `/career
+  status` works there too. A second turn confirmed the plugin **refuses**
+  an invalid profile patch before writing anything.
+- ☑ **Two real defects found by that test, both fixed:**
+  - **Patch semantics.** Dicts were replaced wholesale while lists merged
+    by id, so patching one field of `person` was rejected for dropping the
+    object's other fields. A patch now changes only what it names.
+  - **A name collision.** A Hermes home contains its own `profile.yaml`
+    (the descriptor Hermes writes for its bots). The plugin used the same
+    generic name, so a Hermes home looked like a workspace and
+    `career_init` would create `notes/`, `raw/`, and `out/` inside it.
+    The artifact is now the **career profile** in `career.yaml`, and three
+    guards back it up: a directory is a workspace only when its career
+    file parses as one, an unrelated `career.yaml` is never overwritten,
+    and a workspace is never created inside a Hermes home.
+- ☐ **Clean-*profile* test with no local state at all.** The test above
+  used a cloned profile (so it had a model and auth). A profile with
+  genuinely no state — no skills, no prior sessions — is still untested.
 - ☐ **Plugin catalog submission**: a PR to
   `NousResearch/hermes-agent` adding `plugin-catalog/evergreen.yaml` with
   the reviewed commit SHA. Until then, install is by git URL only.
 - ☐ **A worked example**: a small `examples/` directory with a scrubbed
-  profile and the PDF it produces, so a stranger can see the output
+  career profile and the PDF it produces, so a stranger can see the output
   without setting anything up. This is the "scrubbed example workspace"
   from the decisions above.
 

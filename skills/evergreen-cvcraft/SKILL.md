@@ -193,3 +193,26 @@ The build's own report is the floor, not the ceiling:
 The build copies the template into a scratch directory before compiling, so
 a template directory is never written to and never accumulates build
 artifacts.
+
+## Developing against a running gateway
+
+A Hermes gateway is a single multiplexed process that serves every profile.
+It loads plugin code **at startup**, and `hermes plugins update` only
+reloads the gateway's command surface — the message it prints says
+`deferred: tools (next session)`, and even a new session served by the
+*same* gateway keeps the old tool code in memory.
+
+So after changing plugin code:
+
+```
+hermes plugins update evergreen   # pull the new code
+hermes gateway restart            # make the new code live
+```
+
+Skipping the restart is the trap: the source on disk is new, the tool
+behaviour is not, and a test will tell you the fix "did not work".
+
+A second trap: with a gateway running, a session in one profile can be
+served the plugin copy of another — the gateway caches one module per
+plugin name. When a test profile behaves differently from the default
+profile, check which copy is actually loaded before believing the result.
