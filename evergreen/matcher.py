@@ -27,7 +27,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from . import markup
-from .profile import Profile
+from .career import CareerProfile
 
 # Terms that describe the posting rather than the work. Matching on these
 # says little about which experience is relevant.
@@ -179,7 +179,7 @@ def _entry_title(entry: dict) -> str:
     return entry.get("id", "")
 
 
-def match(profile: Profile, jd_text: str,
+def match(profile: CareerProfile, jd_text: str,
           slots: list[str] | None = None) -> MatchReport:
     """Rank a profile's entries against a job description."""
     terms = jd_terms(jd_text)

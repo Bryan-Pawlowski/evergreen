@@ -13,14 +13,14 @@ metadata:
 
 # Evergreen — career workspace workflow
 
-A **workspace** holds one person's career data. `profile.yaml` is the
-structured source of truth; `notes/` holds prose nuance; `raw/` holds
-immutable ingested sources; `targets/` holds per-job match reports; `out/`
-holds rendered PDFs.
+A **workspace** holds one person's career data. The **career profile**
+(`career.yaml`) is the structured source of truth; `notes/` holds prose
+nuance; `raw/` holds immutable ingested sources; `targets/` holds per-job
+match reports; `out/` holds rendered PDFs.
 
-The rendered CV is a **view** over the profile, not the source of truth. A
-change to what a CV shows is a change to the profile (or to a `visible:
-false` flag), never an edit to the generated `.tex`.
+The rendered CV is a **view** over the career profile, not the source of
+truth. A change to what a CV shows is a change to the profile (or to a
+`visible: false` flag), never an edit to the generated `.tex`.
 
 ## When to Use
 
@@ -62,12 +62,15 @@ goes through `career_ingest` first, so the raw layer holds the original
 document. The raw layer is immutable: re-ingesting identical content is a
 no-op, and a corrected source is a *new* document, not an edit.
 
-### 2. Write the profile
+### 2. Write the career profile
 
-`career_profile` with `action: "update"` and a patch. List fields merge by
-`id`, so you can update one entry without resending the whole list.
+`career_profile` with `action: "update"` and a patch. A patch changes
+only what it names: nested objects merge key by key, and lists of records
+(experience, projects, education, milestones) merge by `id`, so you can
+update one entry without resending the rest. Lists of values (skills,
+languages, links) are replaced.
 
-**Prose style for bullets.** The house style:
+**Prose style for bullets.** The house style for the career profile:
 
 - **No em-dashes in prose.** A dash *between two facts in a sentence* goes; a
   dash *inside a range* stays (`10–12` is a range, `DirectX 10–12` is a
@@ -98,7 +101,7 @@ name the actual layer, or leave it out.
 
 `career_match` with the job description (text or a file path) and a `target`
 name. The match is **deterministic**: it extracts the job's terms, weights
-them, and ranks the profile's entries by how much of the job they cover.
+them, and ranks the career profile's entries by how much of the job they cover.
 
 It returns:
 - `matched` — each entry with its score and the terms it matched.

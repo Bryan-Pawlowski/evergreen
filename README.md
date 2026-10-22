@@ -8,18 +8,18 @@ rendered through any of the shipped templates.
 
 The design principle, inherited from the project this grew out of: **a
 rendered CV is a view over the career record, not the source of truth.** What
-a CV shows is decided in the profile, so a change to the CV is a change to
-the profile, and the two can never drift apart.
+a CV shows is decided in the career profile, so a change to the CV is a
+change to the profile, and the two can never drift apart.
 
 ## What it does
 
 - **Intake** — asks for a CV, GitHub repos, and links to work, then keeps
   asking about the skills behind them.
-- **A structured career record** — `profile.yaml` holds the facts; markdown
+- **A structured career record** — `career.yaml` holds the facts; markdown
   notes hold the nuance; the raw layer holds the original documents,
   immutably.
-- **Job-description matching** — a deterministic pass that ranks the profile
-  against a posting and reports the terms *nothing* in the profile covers.
+- **Job-description matching** — a deterministic pass that ranks the career
+  profile against a posting and reports the terms *nothing* in it covers.
 - **LaTeX CV generation** — renders to PDF with tectonic, and reports the
   page count and the overfull-box count so layout problems are visible
   rather than silent.
@@ -68,7 +68,7 @@ hermes career build --template yaac --target acme
 
 ```
 ~/evergreen/
-├── profile.yaml        the structured source of truth
+├── career.yaml         the career profile — the source of truth
 ├── notes/              prose nuance, one markdown file per topic
 ├── raw/                immutable ingested sources (content-hashed)
 ├── targets/            per-job match reports
@@ -78,13 +78,20 @@ hermes career build --template yaac --target acme
 ```
 
 It is a plain directory: git-track it, back it up, move it, or point another
-tool at it. Nothing about it is Hermes-specific.
+tool at it. Nothing about it is Hermes-specific. A workspace is any directory
+with a `career.yaml` in it — the `notes/`, `raw/`, and `out/` folders are
+conventional, not required.
 
-## The profile
+## The career profile
 
-`profile.yaml` is the source of truth. It is validated against
-`schema/profile.schema.json` on every write, so a malformed profile is
+`career.yaml` is the source of truth. It is validated against
+`schema/career.schema.json` on every write, so a malformed profile is
 rejected with a specific error rather than producing a broken CV.
+
+The file is named `career.yaml` rather than the more obvious
+`profile.yaml` on purpose: a Hermes home contains its own `profile.yaml`
+(the descriptor Hermes writes for its bots), and a plugin using the generic
+name would mistake that file for a career profile.
 
 ```yaml
 schema_version: 1
@@ -122,7 +129,7 @@ projects:
 | `` `code` `` | monospace |
 | `[label](url)` | a link |
 
-Everything else is escaped for you. This keeps a profile editable by
+Everything else is escaped for you. This keeps a career profile editable by
 someone who does not write LaTeX, portable between templates, and safe —
 a profile cannot inject arbitrary macros.
 
@@ -151,7 +158,7 @@ evergreen/
 ├── __init__.py                 the plugin entry: register(ctx)
 ├── evergreen/
 │   ├── markup.py               inline markup -> LaTeX (the only place it happens)
-│   ├── profile.py              loading, validation, the workspace layout
+│   ├── career.py               the career profile: loading, validation, workspace
 │   ├── matcher.py              job-description matching
 │   ├── dialects.py             per-template-family LaTeX emitters
 │   ├── render.py               template discovery + slot substitution
@@ -161,7 +168,7 @@ evergreen/
 ├── skills/
 │   ├── evergreen-career/       the workflow
 │   └── evergreen-cvcraft/      the LaTeX craft
-├── schema/profile.schema.json
+├── schema/career.schema.json
 └── templates/
 ```
 
@@ -171,9 +178,9 @@ Leaving those to an LLM re-derives them every session and gets them subtly
 wrong — the class macro argument orders alone are enough to break a build.
 A plugin puts them in code, where they are tested.
 
-**Why a structured profile and not just prose?** Tailoring a CV to a job is
+**Why a structured career profile and not just prose?** Tailoring a CV to a job is
 a *selection* problem: which of twenty entries, in what order, with what
-emphasis. Prose cannot answer that reproducibly. The structured profile can,
+emphasis. Prose cannot answer that reproducibly. A structured profile can,
 which is why the matcher is deterministic and the same posting always
 produces the same ranking.
 

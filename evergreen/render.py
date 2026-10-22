@@ -19,7 +19,7 @@ from pathlib import Path
 from typing import Any
 
 from . import dialects
-from .profile import Profile, SLOTS, load_structured
+from .career import CareerProfile, SLOTS, load_structured
 
 SLOT_RE = re.compile(
     r"%HERMES:SLOT\s+(?P<name>[A-Za-z0-9_:.-]+)\s*\n(?P<body>.*?)(?:%HERMES:END\s*\n?)",
@@ -145,7 +145,7 @@ def discover_templates(*roots: Path) -> list[Template]:
 # Rendering
 # --------------------------------------------------------------------------
 
-def render_tex(template: Template, profile: Profile, selection: dict[str, list[dict]] | None = None) -> str:
+def render_tex(template: Template, profile: CareerProfile, selection: dict[str, list[dict]] | None = None) -> str:
     """Render the template's LaTeX with the profile's content substituted in.
 
     ``selection`` maps slot name -> the list of entries to render. It defaults

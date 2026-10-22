@@ -1,7 +1,7 @@
 """Evergreen — a career workspace and LaTeX CV builder for Hermes.
 
 The plugin gives an agent a *workspace* to hold one person's career data
-(``profile.yaml`` as the structured source of truth, markdown notes for prose
+(``career.yaml`` as the structured source of truth, markdown notes for prose
 nuance) and renders that data into a LaTeX CV, tailored to a job description.
 
 Tools:
@@ -25,7 +25,8 @@ from typing import Any
 from . import matcher as matcher_mod
 from . import workspace as ws_mod
 from .build import BuildError, build_tex, find_tectonic, tectonic_install_hint
-from .profile import Profile, ProfileError, Workspace, find_workspace, validate
+from .career import (CareerProfile, CareerProfileError, Workspace,
+                      _hermes_home_markers, find_workspace, validate)
 from .render import TemplateError, discover_templates, load_template, render_tex, slots_in, stage
 
 PLUGIN_ROOT = Path(__file__).resolve().parent.parent
@@ -99,13 +100,38 @@ def career_init(params: dict, ctx=None, **kw) -> str:
             "ok": True,
             "status": "exists",
             "path": str(workspace.root),
-            "profile": str(workspace.profile_path),
+            "career_profile": str(workspace.career_path),
             "message": "A workspace already exists here.",
         })
 
+    # Refuse to clobber a file that is not a career profile. The name is
+    # distinctive, but a directory may still hold an unrelated career.yaml
+    # — and overwriting someone's file is not a recoverable mistake.
+    if workspace.career_path.exists():
+        return json.dumps({
+            "error": f"{workspace.career_path} already exists and is not a "
+                     f"career profile. Refusing to overwrite it. Choose a "
+                     f"different directory, or move that file aside.",
+            "path": str(workspace.career_path),
+        })
+
+    # Refuse to build a workspace inside a Hermes home. A Hermes home holds
+    # its own profile.yaml, config, and state database; littering it with
+    # notes/, raw/, and out/ is not a workspace, it is pollution.
+    markers = _hermes_home_markers(workspace.root)
+    if markers:
+        return json.dumps({
+            "error": f"{workspace.root} looks like a Hermes home "
+                     f"(found: {', '.join(markers)}). A career workspace "
+                     f"should be its own directory — pick one outside the "
+                     f"Hermes home, for example ~/evergreen.",
+            "path": str(workspace.root),
+            "hermes_home_markers": markers,
+        })
+
     workspace.create()
-    if not workspace.profile_path.exists():
-        workspace.profile_path.write_text(
+    if not workspace.career_path.exists():
+        workspace.career_path.write_text(
             "schema_version: 1\n"
             "person:\n"
             "  name:\n"
@@ -135,10 +161,10 @@ def career_init(params: dict, ctx=None, **kw) -> str:
     return json.dumps({
         "ok": True,
         "path": str(workspace.root),
-        "profile": str(workspace.profile_path),
+        "career_profile": str(workspace.career_path),
         "next_question": ws_mod.CHECKLIST[0]["prompt"],
         "layout": {
-            "profile": "profile.yaml (structured source of truth)",
+            "career_profile": "career.yaml (the structured source of truth)",
             "notes": "notes/ (prose nuance)",
             "raw": "raw/ (immutable ingested sources)",
             "targets": "targets/ (per-job match results)",
@@ -246,14 +272,14 @@ def career_profile(params: dict, ctx=None, **kw) -> str:
 
     try:
         profile = workspace.load()
-    except ProfileError as exc:
+    except CareerProfileError as exc:
         return json.dumps({"error": str(exc)})
 
     if action == "read":
         return json.dumps({
             "ok": True,
             "path": str(profile.path),
-            "profile": profile.to_dict(),
+            "career_profile": profile.to_dict(),
         }, indent=2, ensure_ascii=False)
 
     if action != "update":
@@ -283,14 +309,14 @@ def career_profile(params: dict, ctx=None, **kw) -> str:
         }, indent=2)
 
     try:
-        workspace.save(Profile(data, workspace.profile_path))
-    except ProfileError as exc:
+        workspace.save(CareerProfile(data, workspace.career_path))
+    except CareerProfileError as exc:
         return json.dumps({"error": str(exc)})
 
     return json.dumps({
         "ok": True,
         "updated": list(patch.keys()),
-        "path": str(workspace.profile_path),
+        "path": str(workspace.career_path),
     }, indent=2)
 
 
@@ -315,7 +341,7 @@ def career_match(params: dict, ctx=None, **kw) -> str:
 
     try:
         profile = workspace.load()
-    except ProfileError as exc:
+    except CareerProfileError as exc:
         return json.dumps({"error": str(exc)})
 
     report = matcher_mod.match(profile, jd_text)
@@ -347,7 +373,7 @@ def career_build(params: dict, ctx=None, **kw) -> str:
 
     try:
         profile = workspace.load()
-    except ProfileError as exc:
+    except CareerProfileError as exc:
         return json.dumps({"error": str(exc)})
 
     try:
@@ -472,7 +498,7 @@ TOOLS = [
         "name": "career_init",
         "description": (
             "Create a career workspace at a path the user chooses. The workspace "
-            "holds profile.yaml (the structured source of truth), notes/ (prose "
+            "holds career.yaml (the structured source of truth), notes/ (prose "
             "nuance), raw/ (immutable ingested sources), targets/ (per-job match "
             "results), out/ (rendered PDFs) and templates.local/ (the user's own "
             "LaTeX templates). Returns the first intake question. Use this once "
@@ -683,14 +709,14 @@ def _status(ctx=None) -> str:
         profile = workspace.load()
         profile_status = "valid"
         profile_error = None
-    except ProfileError as exc:
+    except CareerProfileError as exc:
         profile_status = "invalid"
         profile_error = str(exc)
 
     return json.dumps({
         "ok": True,
         "workspace": str(workspace.root),
-        "profile": str(workspace.profile_path),
+        "career_profile": str(workspace.career_path),
         "profile_status": profile_status,
         "profile_error": profile_error,
         "intake": progress,

@@ -13,7 +13,7 @@ from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
 
-from .profile import ProfileError, Workspace
+from .career import CareerProfileError, Workspace
 
 # The intake checklist: what a new workspace needs before a CV can be
 # generated. The order matters: it is the order the questions get asked.

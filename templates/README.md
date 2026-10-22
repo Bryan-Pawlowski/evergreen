@@ -1,7 +1,7 @@
 # Template contract
 
 A **template** is a directory under `templates/` (shipped) or `templates.local/`
-(user-supplied) that turns a `profile.yaml` into a `.tex` file. Two files are
+(user-supplied) that turns a `career.yaml` into a `.tex` file. Two files are
 required, one optional:
 
 ```
@@ -59,7 +59,7 @@ Recognised slot names:
 | `milestones` | career milestones |
 | `links` | personal links |
 | `languages` | spoken languages |
-| `section:<id>` | a user-defined section from `profile.yaml` |
+| `section:<id>` | a user-defined section from `career.yaml` |
 
 A slot with no content renders as nothing (the marker block is removed, leaving
 no blank space). A slot marker for an unknown name is a build error, not a

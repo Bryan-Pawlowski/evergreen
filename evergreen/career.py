@@ -1,12 +1,17 @@
-"""Profile loading, validation, and the workspace layout.
+"""Career profile: loading, validation, and the workspace layout.
 
-The profile is the structured source of truth. Markdown notes under
-``notes/`` carry prose nuance; this module owns the facts a CV is rendered
-from.
+The career profile is the structured source of truth for one person's
+career data. Markdown notes under ``notes/`` hold prose nuance; this
+module owns the facts a CV is rendered from.
 
-YAML parsing: the Hermes runtime ships ``ruamel.yaml`` (not PyYAML), so that
-is the primary parser. A profile may also be written as JSON, which is
-parsed with the stdlib and needs no dependency at all.
+The file is named ``career.yaml``, not ``profile.yaml``, on purpose: a
+Hermes home contains its own ``profile.yaml`` (the profile descriptor
+Hermes writes for its bots), and a plugin that used the generic name
+would mistake that file for a career profile.
+
+YAML parsing: the Hermes runtime ships ``ruamel.yaml`` (not PyYAML), so
+that is the primary parser. A career profile may also be written as
+JSON, which is parsed with the stdlib and needs no dependency at all.
 """
 
 from __future__ import annotations
@@ -16,7 +21,7 @@ import os
 from pathlib import Path
 from typing import Any
 
-PROFILE_FILENAME = "profile.yaml"
+CAREER_FILENAME = "career.yaml"
 
 # The slots a template may request, in the order they appear in a CV.
 SLOTS = [
@@ -32,7 +37,7 @@ SLOTS = [
 ]
 
 
-class ProfileError(Exception):
+class CareerProfileError(Exception):
     """Raised when a profile is missing, unreadable, or invalid."""
 
 
@@ -47,7 +52,7 @@ def _load_yaml(text: str) -> Any:
         try:
             import yaml  # type: ignore
         except ImportError as exc:
-            raise ProfileError(
+            raise CareerProfileError(
                 "No YAML parser available. Install ruamel.yaml, or write the "
                 "profile as JSON (profile.json)."
             ) from exc
@@ -62,20 +67,20 @@ def load_structured(path: Path) -> Any:
     try:
         text = path.read_text(encoding="utf-8")
     except OSError as exc:
-        raise ProfileError(f"Cannot read {path}: {exc}") from exc
+        raise CareerProfileError(f"Cannot read {path}: {exc}") from exc
 
     if path.suffix.lower() == ".json":
         try:
             return json.loads(text)
         except json.JSONDecodeError as exc:
-            raise ProfileError(f"{path.name} is not valid JSON: {exc}") from exc
+            raise CareerProfileError(f"{path.name} is not valid JSON: {exc}") from exc
 
     try:
         return _load_yaml(text)
-    except ProfileError:
+    except CareerProfileError:
         raise
     except Exception as exc:
-        raise ProfileError(f"{path.name} is not valid YAML: {exc}") from exc
+        raise CareerProfileError(f"{path.name} is not valid YAML: {exc}") from exc
 
 
 def dump_structured(data: Any, path: Path) -> None:
@@ -90,7 +95,7 @@ def dump_structured(data: Any, path: Path) -> None:
         try:
             import yaml  # type: ignore
         except ImportError as exc:
-            raise ProfileError("No YAML writer available.") from exc
+            raise CareerProfileError("No YAML writer available.") from exc
         path.write_text(yaml.safe_dump(data, sort_keys=False, allow_unicode=True), encoding="utf-8")
         return
 
@@ -107,7 +112,7 @@ def dump_structured(data: Any, path: Path) -> None:
 # --------------------------------------------------------------------------
 
 def _schema_path() -> Path:
-    return Path(__file__).resolve().parent.parent / "schema" / "profile.schema.json"
+    return Path(__file__).resolve().parent.parent / "schema" / "career.schema.json"
 
 
 def validate(profile: dict, schema_path: Path | None = None) -> list[str]:
@@ -121,7 +126,7 @@ def validate(profile: dict, schema_path: Path | None = None) -> list[str]:
     try:
         schema = json.loads(spath.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
-        raise ProfileError(f"Cannot read the profile schema at {spath}: {exc}") from exc
+        raise CareerProfileError(f"Cannot read the profile schema at {spath}: {exc}") from exc
 
     try:
         import jsonschema  # type: ignore
@@ -179,11 +184,54 @@ def _valid_id(value: str) -> bool:
     return bool(re.match(r"^[a-z0-9][a-z0-9-]*$", value or ""))
 
 
+def _looks_like_career_profile(path: Path) -> bool:
+    """True when a file is recognisably an Evergreen career profile.
+
+    A directory that merely *has* a file of the right name is not a
+    workspace. The check is deliberately structural rather than a full
+    validation: it must not reject a half-filled profile, only a file
+    that is some other document entirely.
+    """
+    if not path.exists():
+        return False
+    try:
+        data = load_structured(path)
+    except ProfileError:
+        return False
+    except Exception:
+        return False
+    return (
+        isinstance(data, dict)
+        and data.get("schema_version") == 1
+        and isinstance(data.get("person"), dict)
+    )
+
+
+def _hermes_home_markers(root: Path) -> list[str]:
+    """Names that identify a directory as a Hermes home rather than a workspace.
+
+    A Hermes home holds its own ``profile.yaml``, its own config, and its
+    own state database. Creating a career workspace inside one would litter
+    it with ``notes/``, ``raw/``, and ``out/`` and put a ``career.yaml``
+    next to Hermes' own files.
+    """
+    markers = []
+    if (root / "profile.yaml").exists():
+        markers.append("profile.yaml")
+    if (root / "state.db").exists():
+        markers.append("state.db")
+    if (root / "hermes_cli").exists():
+        markers.append("hermes_cli/")
+    if (root / "config.yaml").exists() and (root / "sessions").exists():
+        markers.append("config.yaml + sessions/")
+    return markers
+
+
 # --------------------------------------------------------------------------
-# Profile access
+# CareerProfile access
 # --------------------------------------------------------------------------
 
-class Profile:
+class CareerProfile:
     """A loaded, validated profile."""
 
     def __init__(self, data: dict, path: Path | None = None):
@@ -248,7 +296,7 @@ class Workspace:
     Layout::
 
         <root>/
-        ├── profile.yaml        the structured source of truth
+        ├── career.yaml         the structured source of truth (the career profile)
         ├── notes/              prose nuance, one markdown file per topic
         ├── raw/                immutable ingested sources
         ├── targets/            per-job-description match results
@@ -263,12 +311,12 @@ class Workspace:
     # -- paths -------------------------------------------------------------
 
     @property
-    def profile_path(self) -> Path:
-        for name in ("profile.yaml", "profile.yml", "profile.json"):
+    def career_path(self) -> Path:
+        for name in ("career.yaml", "career.yml", "career.json"):
             candidate = self.root / name
             if candidate.exists():
                 return candidate
-        return self.root / "profile.yaml"
+        return self.root / "career.yaml"
 
     @property
     def notes_dir(self) -> Path:
@@ -297,9 +345,16 @@ class Workspace:
     # -- lifecycle ---------------------------------------------------------
 
     def exists(self) -> bool:
-        return self.root.is_dir() and (
-            self.profile_path.exists() or (self.root / "profile.yaml").exists()
-        )
+        """True when this directory holds a *career profile*.
+
+        The file merely existing is not enough: the directory might hold
+        an unrelated YAML file with the same name, or a half-written
+        profile. What makes a directory a workspace is a career file that
+        actually parses as a career profile.
+        """
+        if not self.root.is_dir():
+            return False
+        return _looks_like_career_profile(self.career_path)
 
     def create(self) -> None:
         for d in (self.notes_dir, self.raw_dir, self.targets_dir, self.out_dir,
@@ -310,27 +365,27 @@ class Workspace:
             encoding="utf-8",
         )
 
-    def load(self) -> Profile:
-        if not self.profile_path.exists():
-            raise ProfileError(
-                f"No profile at {self.profile_path}. Run `hermes career init` "
-                f"or create {self.profile_path.name}."
+    def load(self) -> CareerProfile:
+        if not self.career_path.exists():
+            raise CareerProfileError(
+                f"No profile at {self.career_path}. Run `hermes career init` "
+                f"or create {self.career_path.name}."
             )
-        data = load_structured(self.profile_path)
+        data = load_structured(self.career_path)
         if not isinstance(data, dict):
-            raise ProfileError(f"{self.profile_path.name} must contain a mapping.")
+            raise CareerProfileError(f"{self.career_path.name} must contain a mapping.")
         errors = validate(data)
         if errors:
             joined = "\n".join(f"  - {e}" for e in errors)
-            raise ProfileError(f"{self.profile_path.name} is invalid:\n{joined}")
-        return Profile(data, self.profile_path)
+            raise CareerProfileError(f"{self.career_path.name} is invalid:\n{joined}")
+        return CareerProfile(data, self.career_path)
 
-    def save(self, profile: Profile) -> None:
+    def save(self, profile: CareerProfile) -> None:
         errors = validate(profile.to_dict())
         if errors:
             joined = "\n".join(f"  - {e}" for e in errors)
-            raise ProfileError(f"Refusing to write an invalid profile:\n{joined}")
-        dump_structured(profile.to_dict(), self.profile_path)
+            raise CareerProfileError(f"Refusing to write an invalid profile:\n{joined}")
+        dump_structured(profile.to_dict(), self.career_path)
 
 
 def _today() -> str:
@@ -343,15 +398,15 @@ def find_workspace(start: Path | None = None) -> Workspace | None:
     current = Path(start or os.getcwd()).resolve()
     for candidate in [current, *current.parents]:
         ws = Workspace(candidate)
-        if (candidate / ".evergreen").is_dir() or ws.profile_path.exists():
+        if (candidate / ".evergreen").is_dir() or ws.career_path.exists():
             if ws.exists():
                 return ws
     return None
 
 
 __all__ = [
-    "Profile",
-    "ProfileError",
+    "CareerProfile",
+    "CareerProfileError",
     "Workspace",
     "SLOTS",
     "dump_structured",

@@ -69,7 +69,7 @@ def icon_cmd(name: str | None, fallback: str = r"\faCircle") -> str:
 
 def _mk_ctx(profile: Any, meta: dict | None = None) -> Ctx:
     return {
-        "profile": profile,
+        "career_profile": profile,
         "esc": markup.escape,
         "inline": markup.inline,
         "plain": markup.plain,
@@ -719,7 +719,7 @@ _BUILTIN: dict[str, Callable[[str, list[dict], Ctx], str]] = {
 def _section_title(ctx: Ctx, slot: str) -> str:
     """Look up the title of a user-defined section from the profile."""
     wanted = slot.split(":", 1)[1]
-    profile = ctx.get("profile")
+    profile = ctx.get("career_profile")
     data = getattr(profile, "data", profile) or {}
     for sec in data.get("sections") or []:
         if sec.get("id") == wanted:

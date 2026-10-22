@@ -13,7 +13,7 @@ These forks were decided and are no longer open:
 
 | fork | decision |
 |---|---|
-| Where the Evergreen wiki's prose goes | **Add `profile.yaml` to `evergreen/` in place.** The wiki stays where it is and *is* the prose layer. No move, no copy, no duplication. The plugin never reads notes, so `wiki/entities/` and a flat `notes/` are equivalent to it. |
+| Where the Evergreen wiki's prose goes | **Add `career.yaml` to `evergreen/` in place.** The wiki stays where it is and *is* the prose layer. No move, no copy, no duplication. The plugin never reads notes, so `wiki/entities/` and a flat `notes/` are equivalent to it. |
 | Does Evergreen become an instance of the plugin? | **Yes — migrate Evergreen to instance #1, and ship a scrubbed example workspace** in the plugin repo. A real migration is the best test of the design; the scrubbed example gives a stranger something concrete. |
 | How the polish step stores its output | **A per-target overlay file plus a mechanical "no new facts" validator.** `targets/<name>/overlay.yaml` holds only the deltas; the base profile is never mutated, so a target is re-renderable and re-targetable. The validator compares a reworded bullet's content words against the original and refuses new ones. |
 | Does the plugin read `notes/`? | **Write-only for now.** The plugin stores and lists notes but never reads them into a build, so the render path stays deterministic and single-input. Reading notes as polish context is the natural later upgrade. |
@@ -76,14 +76,14 @@ These forks were decided and are no longer open:
 
 ## 3. Migrate Evergreen to the new format
 
-- ☑ **Decided where the wiki's prose goes: add `profile.yaml` to
+- ☑ **Decided where the wiki's prose goes: add `career.yaml` to
   `evergreen/` in place.** The wiki stays where it is and *is* the prose
   layer. No move, no copy, no duplication. The plugin never reads notes
   (decision above), so `wiki/entities/` and a flat `notes/` are equivalent
   to it. Consequence: the plugin's README must say "notes/ is
   conventional, not required" — a workspace is any directory with a
-  `profile.yaml`.
-- ☐ **Build `profile.yaml`** from `wiki/` + `raw/resume/resume-2026-10-20.md`.
+  `career.yaml`.
+- ☐ **Build `career.yaml`** from `wiki/` + `raw/resume/resume-2026-10-20.md`.
   Watch the CV-view rule: `paid-local-llm-platform` is `cv_excluded: true`
   and must not appear.
 - ☐ **Render all three variants and compare against the current PDFs**
@@ -178,7 +178,7 @@ These forks were decided and are no longer open:
 - ☑ Two-artefact split: the plugin dir holds only machinery and templates
   (swept for leaked personal data — only author attribution remains); the
   user's data lives in a workspace at a path they choose.
-- ☑ Hybrid source of truth: `profile.yaml` (structured, schema-validated)
+- ☑ Hybrid source of truth: `career.yaml` (structured, schema-validated)
   + `notes/` (reserved) + `raw/` (immutable, content-hashed).
 - ☑ Deterministic match-then-polish: `career_match` ranks entries
   reproducibly and reports what the profile cannot cover.

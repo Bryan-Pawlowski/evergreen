@@ -14,7 +14,7 @@ import tempfile
 from pathlib import Path
 
 from . import markup, matcher
-from .profile import Workspace, validate
+from .career import Workspace, validate
 from .render import discover_templates, load_template, render_tex, slots_in, stage
 
 SAMPLE = {
@@ -153,7 +153,7 @@ def main() -> int:
     with tempfile.TemporaryDirectory() as tmp:
         ws = Workspace(Path(tmp) / "career")
         ws.create()
-        ws.profile_path.write_text(
+        ws.career_path.write_text(
             json.dumps(SAMPLE, indent=2), encoding="utf-8"
         )
         profile = ws.load()
@@ -307,7 +307,7 @@ def test_tools_end_to_end() -> int:
     failures = 0
     with tempfile.TemporaryDirectory() as tmp:
         ws = str(Path(tmp) / "career")
-        from .profile import Workspace
+        from .career import Workspace
         ws_obj = Workspace(Path(ws))
 
         def check(label, condition, detail=""):
@@ -391,7 +391,7 @@ def test_tools_end_to_end() -> int:
         out = _json.loads(career_profile({
             "action": "read", "workspace": ws}))
         check("tools: profile read returns the data",
-              out.get("profile", {}).get("person", {}).get("name", {}).get("first")
+              out.get("career_profile", {}).get("person", {}).get("name", {}).get("first")
               == "Jane", str(out)[:200])
 
         # An invalid patch must be rejected, not written. Note this is a
@@ -419,7 +419,7 @@ def test_tools_end_to_end() -> int:
         check("tools: a partial person patch succeeds", out.get("ok"),
               str(out)[:300])
         person = _json.loads(career_profile({
-            "action": "read", "workspace": ws}))["profile"]["person"]
+            "action": "read", "workspace": ws}))["career_profile"]["person"]
         check("tools: a partial patch changes only what it names",
               person.get("tagline") == "Senior Graphics Engineer"
               and person.get("name", {}).get("first") == "Jane"
@@ -432,7 +432,7 @@ def test_tools_end_to_end() -> int:
             "patch": {"experience": [{"id": "acme", "role": "Staff Engineer"}]}}))
         check("tools: an id-matched entry merges", out.get("ok"), str(out)[:200])
         entries = _json.loads(career_profile({
-            "action": "read", "workspace": ws}))["profile"]["experience"]
+            "action": "read", "workspace": ws}))["career_profile"]["experience"]
         check("tools: merging an entry keeps the other fields",
               len(entries) == 1
               and entries[0]["role"] == "Staff Engineer"
@@ -443,10 +443,39 @@ def test_tools_end_to_end() -> int:
             "action": "update", "workspace": ws,
             "patch": {"skills": [{"label": "Only", "items": ["Rust"]}]}}))
         entries = _json.loads(career_profile({
-            "action": "read", "workspace": ws}))["profile"]["skills"]
+            "action": "read", "workspace": ws}))["career_profile"]["skills"]
         check("tools: an id-less list is replaced, not appended",
               len(entries) == 1 and entries[0]["label"] == "Only",
               str(entries)[:200])
+
+        # An unrelated file must not be mistaken for a career profile, and
+        # must not be overwritten.
+        foreign = Path(tmp) / "foreign"
+        foreign.mkdir()
+        (foreign / "career.yaml").write_text(
+            "name: someone\ndescription: not a career profile\n", encoding="utf-8")
+        out = _json.loads(career_init({"path": str(foreign)}))
+        check("tools: a foreign career.yaml is not a workspace",
+              "error" in out, str(out)[:200])
+        check("tools: a foreign career.yaml is not overwritten",
+              (foreign / "career.yaml").read_text(encoding="utf-8")
+              .startswith("name: someone"))
+
+        # A Hermes home must never be treated as a workspace, and a
+        # workspace must never be created inside one.
+        fake_home = Path(tmp) / "fakehermes"
+        fake_home.mkdir()
+        (fake_home / "profile.yaml").write_text("description: x\n", encoding="utf-8")
+        (fake_home / "state.db").write_text("", encoding="utf-8")
+        from .career import Workspace as _WS, find_workspace as _find
+        check("tools: a Hermes home is not a workspace",
+              not _WS(fake_home).exists())
+        out = _json.loads(career_init({"path": str(fake_home)}))
+        check("tools: a workspace is not created inside a Hermes home",
+              "error" in out, str(out)[:200])
+        check("tools: nothing was written into the Hermes home",
+              not (fake_home / "notes").exists()
+              and not (fake_home / "career.yaml").exists())
 
         jd = ("We are hiring a CUDA rendering engineer. Requirements: C++, "
               "GPU programming, Docker, Python. Nice to have: Vulkan.")
