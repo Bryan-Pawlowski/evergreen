@@ -193,6 +193,8 @@
               "title": { "type": "string" },
               "subtitle": { "type": ["string", "null"] },
               "date": { "type": ["string", "null"] },
+              "url": { "type": ["string", "null"] },
+              "tags": { "type": "array", "items": { "type": "string" } },
               "bullets": { "type": "array", "items": { "$ref": "#/$defs/bullet" } }
             }
           }

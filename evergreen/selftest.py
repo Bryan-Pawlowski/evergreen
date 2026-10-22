@@ -265,6 +265,19 @@ def main() -> int:
                 f"render[{t.id}]: content present",
                 "Acme Corp" in t_tex,
             )
+            # Every field the profile carries must reach the rendered
+            # LaTeX. The minimal dialect used to drop a language entry's
+            # level, so the list of languages silently vanished from the
+            # PDF while the profile still said it was there.
+            failures += not check(
+                f"render[{t.id}]: the language level is rendered",
+                "Native" in t_tex,
+                "the language level was dropped",
+            )
+            failures += not check(
+                f"render[{t.id}]: the language name is rendered",
+                "English" in t_tex,
+            )
             if not find_tectonic():
                 continue
             with tempfile.TemporaryDirectory() as build:

@@ -344,9 +344,15 @@ def yaac_render(slot: str, items: list[dict], ctx: Ctx) -> str:
         out.append(r"\begin{keywordstable}")
         for it in items:
             label = esc(it.get("name", ""))
-            if it.get("level"):
-                label += ", " + esc(it["level"])
-            out.append(r"\keywordsentry{%s}{}" % label)
+            level = it.get("level")
+            if level:
+                # The level is the content (a language list); the name is
+                # the label. Putting the list in the narrow left column
+                # wraps it into a column of one word per line, so it goes
+                # in the description column instead.
+                out.append(r"\keywordsentry{%s}{%s}" % (label, esc(level)))
+            else:
+                out.append(r"\keywordsentry{%s}{}" % label)
         out.append(r"\end{keywordstable}")
 
     elif slot.startswith("section:"):
@@ -656,8 +662,14 @@ def minimal_render(slot: str, items: list[dict], ctx: Ctx) -> str:
     elif slot == "languages":
         out.append(r"\sechead{Languages}")
         for it in items:
+            name = esc(it.get("name", ""))
+            # The level carries the actual content (a language list, a
+            # proficiency note). Dropping it loses data, so it is
+            # rendered after the name rather than discarded.
+            if it.get("level"):
+                name += ": " + esc(it["level"])
             out.append(r"\faIco{%s} %s\par" % (
-                icon_cmd("language", r"\faLanguage"), esc(it.get("name", ""))))
+                icon_cmd("language", r"\faLanguage"), name))
 
     return "\n".join(out)
 
