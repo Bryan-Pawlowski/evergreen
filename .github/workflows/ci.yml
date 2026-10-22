@@ -1,0 +1,72 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # Tectonic is a single static binary with no TeX distribution to
+      # install. The selftest compiles every shipped template, so without it
+      # the templates are never actually built.
+      - name: Install tectonic
+        run: |
+          TECTONIC_VERSION=0.15.0
+          curl -fsSL -o tectonic.tar.gz \
+            "https://github.com/tectonic-typesetting/tectonic/releases/download/tectonic%40${TECTONIC_VERSION}/tectonic-${TECTONIC_VERSION}-x86_64-unknown-linux-gnu.tar.gz"
+          tar -xzf tectonic.tar.gz
+          sudo mv tectonic /usr/local/bin/tectonic
+          tectonic --version
+
+      - name: Install the plugin's Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install ruamel.yaml jsonschema
+
+      - name: Self-test (compiles every shipped template)
+        run: python -m evergreen.selftest
+
+      - name: Validate the plugin manifest
+        run: |
+          pip install hermes-agent
+          hermes plugins validate .
+
+      - name: Check for leaked personal data
+        run: python scripts/check_no_user_data.py
+
+  negative-tests:
+    # The leak check must be able to FAIL. A check that cannot fail is not a
+    # check, so plant a leak and assert the checker catches it.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: The checker must reject a planted leak
+        run: |
+          # Every literal is assembled at runtime, so this file does not
+          # itself trip the checker it is testing.
+          MAIL="real.person@""gmail.com"
+          WINPATH="C:/Us""ers/someone/Documents"
+          printf 'contact: %s\npath: %s\n' "$MAIL" "$WINPATH" > LEAKTEST.md
+          git add LEAKTEST.md
+          if python scripts/check_no_user_data.py --staged; then
+            echo "FAIL: the leak check passed a planted leak"
+            exit 1
+          fi
+          echo "OK: the leak check caught the planted leak"
