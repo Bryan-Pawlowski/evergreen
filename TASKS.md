@@ -19,6 +19,8 @@ These forks were decided and are no longer open:
 | Does the plugin read `notes/`? | **Write-only for now.** The plugin stores and lists notes but never reads them into a build, so the render path stays deterministic and single-input. Reading notes as polish context is the natural later upgrade. |
 | How the matcher gets smarter | **Better term extraction plus a small shipped synonym table.** Weight terms by their position in the posting, extract noun phrases, and ship an editable equivalence table. No dependencies, and the deterministic-selection property is preserved. |
 | Publication shape | **A public repo** (`Bryan-Pawlowski/evergreen`). The plugin dir ships zero personal data; the Evergreen *workspace* stays on this machine and is never committed. |
+| How a workspace is addressed | **By name.** The name becomes a directory directly under the Hermes home (one level deeper than the home itself), and it is recorded *in the career profile*, so it travels with the data if the workspace is moved or copied. No separate registry file. |
+| Where the name's registry lives | **In the career profile itself** (the `name` field), with `career_list` scanning the Hermes home for workspaces. A separate index would drift from the data it indexes. |
 
 ---
 
@@ -200,7 +202,7 @@ These forks were decided and are no longer open:
   skills.
 - ☑ Two-artefact split: the plugin dir holds only machinery and templates
   (swept for leaked personal data — only author attribution remains); the
-  user's data lives in a workspace at a path they choose.
+  user's data lives in a named workspace under the Hermes home.
 - ☑ Hybrid source of truth: `career.yaml` (structured, schema-validated)
   + `notes/` (reserved) + `raw/` (immutable, content-hashed).
 - ☑ Deterministic match-then-polish: `career_match` ranks entries
