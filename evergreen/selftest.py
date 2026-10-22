@@ -1,0 +1,439 @@
+"""End-to-end test of the core pipeline: profile -> render -> compile.
+
+Run with the Hermes python (the one that has ruamel.yaml):
+
+    python -m evergreen.selftest
+"""
+
+from __future__ import annotations
+
+import json
+import re
+import sys
+import tempfile
+from pathlib import Path
+
+from . import markup, matcher
+from .profile import Workspace, validate
+from .render import discover_templates, load_template, render_tex, slots_in, stage
+
+SAMPLE = {
+    "schema_version": 1,
+    "person": {
+        "name": {"first": "Test", "last": "Person"},
+        "tagline": "Software Engineer & Systems Builder",
+        "summary": "Engineer with 10 years across _rendering_ and **infrastructure**.",
+        "email": "test@example.com",
+        "phone": "+1 555 0100",
+        "location": "Portland, Oregon, USA",
+        "links": [
+            {"label": "testuser", "url": "https://github.com/testuser", "icon": "github"},
+        ],
+    },
+    "experience": [
+        {
+            "id": "acme-senior",
+            "role": "Senior Software Engineer",
+            "org": "Acme Corp",
+            "location": "Remote",
+            "start": "Mar 2020",
+            "end": "Present",
+            "bullets": [
+                {"text": "Built a **CUDA** rendering pipeline that cut frame time 40%."},
+                {"text": "Led migration of the CI system to _GitHub Actions_."},
+            ],
+            "tags": ["CUDA", "C++", "CI/CD"],
+            "priority": 80,
+        },
+        {
+            "id": "beta-junior",
+            "role": "Junior Developer",
+            "org": "Beta Inc",
+            "start": "Jun 2017",
+            "end": "Feb 2020",
+            "bullets": [
+                {"text": "Wrote Python ETL scripts and fixed 100+ production bugs."},
+            ],
+            "tags": ["Python"],
+            "priority": 20,
+        },
+    ],
+    "projects": [
+        {
+            "id": "toolkit",
+            "title": "Toolkit",
+            "subtitle": "Open source CLI",
+            "date": "2023",
+            "bullets": [{"text": "1.2k stars on [GitHub](https://github.com/testuser/toolkit)."}],
+        },
+    ],
+    "education": [
+        {
+            "id": "state",
+            "degree": "B.Sc. Computer Science",
+            "org": "State University",
+            "start": "2013",
+            "end": "2017",
+            "detail": "Focus on **graphics** and high-performance computing.",
+        },
+    ],
+    "skills": [
+        {"label": "Languages", "items": ["C++", "Python", "Rust"]},
+        {"label": "Systems", "items": ["CUDA", "Linux", "Docker"]},
+    ],
+    "milestones": [
+        {"title": "Shipped the renderer", "date": "2024", "detail": "Live in 40 games", "icon": "trophy"},
+    ],
+    "languages": [{"name": "English", "level": "Native"}],
+    "sections": [],
+}
+
+JD = """
+We are hiring a Senior Software Engineer to own our CUDA rendering pipeline.
+
+Requirements:
+- 5+ years of C++ and GPU programming (CUDA, OpenGL or Vulkan)
+- Strong CI/CD experience (GitHub Actions or similar)
+- Experience with Docker and Linux
+- Python for tooling
+- Nice to have: Vulkan, performance profiling
+"""
+
+
+def check(label: str, condition: bool, detail: str = "") -> bool:
+    status = "PASS" if condition else "FAIL"
+    print(f"[{status}] {label}" + (f" — {detail}" if detail and not condition else ""))
+    return condition
+
+
+def main() -> int:
+    failures = 0
+
+    # -- markup ----------------------------------------------------------
+    failures += not check(
+        "markup: bold",
+        markup.inline("a **bold** word") == r"a \textbf{bold} word",
+        markup.inline("a **bold** word"),
+    )
+    failures += not check(
+        "markup: italic",
+        markup.inline("an _italic_ word") == r"an \textit{italic} word",
+        markup.inline("an _italic_ word"),
+    )
+    failures += not check(
+        "markup: link",
+        markup.inline("[site](http://x.com)") == r"\href{http://x.com}{site}",
+        markup.inline("[site](http://x.com)"),
+    )
+    failures += not check(
+        "markup: escapes specials",
+        markup.inline("100% & $5") == r"100\% \& \$5",
+        markup.inline("100% & $5"),
+    )
+    failures += not check(
+        "markup: nested bold+italic",
+        markup.inline("**bold _both_**") == r"\textbf{bold \textit{both}}",
+        markup.inline("**bold _both_**"),
+    )
+    failures += not check(
+        "markup: underscore in word is literal",
+        markup.inline("snake_case_name") == r"snake\_case\_name",
+        markup.inline("snake_case_name"),
+    )
+    failures += not check(
+        "markup: en dash becomes --",
+        markup.inline("10–12") == "10--12",
+        markup.inline("10–12"),
+    )
+
+    # -- profile ---------------------------------------------------------
+    errors = validate(SAMPLE)
+    failures += not check("profile: sample validates", not errors, "; ".join(errors))
+
+    with tempfile.TemporaryDirectory() as tmp:
+        ws = Workspace(Path(tmp) / "career")
+        ws.create()
+        ws.profile_path.write_text(
+            json.dumps(SAMPLE, indent=2), encoding="utf-8"
+        )
+        profile = ws.load()
+        failures += not check("profile: loads from disk", profile.person["name"]["first"] == "Test")
+        failures += not check("profile: visible filters hidden", len(profile.visible("experience")) == 2)
+
+        # -- matcher ----------------------------------------------------
+        report = matcher.match(profile, JD)
+        top = report.by_slot["experience"][0]
+        failures += not check(
+            "matcher: CUDA role ranks first",
+            top.entry_id == "acme-senior",
+            f"got {top.entry_id} ({top.title})",
+        )
+        failures += not check(
+            "matcher: reports matched terms",
+            "cuda" in top.matched_terms,
+            str(top.matched_terms),
+        )
+        failures += not check(
+            "matcher: reports unmatched terms",
+            "vulkan" in report.unmatched_terms,
+            str(report.unmatched_terms),
+        )
+        failures += not check(
+            "matcher: no trailing punctuation in terms",
+            not any(t.endswith((".", ",", ";")) for t in report.jd_terms),
+            str([t for t in report.jd_terms if t.endswith((".", ",", ";"))]),
+        )
+        failures += not check(
+            "matcher: posting filler is not a term",
+            "hiring" not in report.jd_terms,
+            "hiring" in report.jd_terms,
+        )
+        failures += not check(
+            "matcher: report carries the entry",
+            bool(report.matched[0].to_dict().get("entry")),
+            "the entry is missing from the serialized report",
+        )
+
+        # -- render -----------------------------------------------------
+        shipped = Path(__file__).resolve().parent.parent / "templates"
+        templates = discover_templates(shipped)
+        failures += not check(
+            "render: templates discovered",
+            {t.id for t in templates} >= {"plain"},
+            str([t.id for t in templates]),
+        )
+
+        template = load_template(shipped / "plain")
+        failures += not check(
+            "render: plain template uses slots",
+            "experience" in slots_in(template),
+            str(slots_in(template)),
+        )
+
+        tex = render_tex(template, profile)
+        failures += not check("render: no slot markers survive", "%HERMES" not in tex)
+        failures += not check("render: content present", "Acme Corp" in tex)
+        failures += not check("render: markup converted", r"\textbf{CUDA}" in tex)
+        # A percent in the *content* must be escaped. The template's own
+        # LaTeX comments legitimately contain %, so check the rendered body
+        # rather than the whole file — and look for an UNESCAPED percent, not
+        # any percent at all (a correctly escaped \% is still a %).
+        body = tex.split(r"\begin{document}", 1)[-1]
+        unescaped = re.findall(r"(?<!\\)%", body)
+        failures += not check(
+            "render: content percent is escaped",
+            not unescaped,
+            f"{len(unescaped)} unescaped % in: "
+            + str([ln for ln in body.splitlines() if re.search(r"(?<!\\)%", ln)][:3]),
+        )
+
+        with tempfile.TemporaryDirectory() as build:
+            main_tex = stage(template, Path(build))
+            main_tex.write_text(tex, encoding="utf-8", newline="\n")
+            from .build import build_tex, find_tectonic
+            if not find_tectonic():
+                print("[SKIP] compile — tectonic not installed")
+            else:
+                result = build_tex(main_tex, Path(build), engine=template.engine)
+                failures += not check(
+                    "build: compiles to PDF",
+                    result.ok,
+                    "; ".join(result.errors)[:400],
+                )
+                failures += not check(
+                    "build: one page",
+                    result.pages == 1,
+                    f"pages={result.pages}",
+                )
+                failures += not check(
+                    "build: no overfull boxes",
+                    result.overfull == 0,
+                    f"overfull={result.overfull}",
+                )
+
+        # -- every shipped template renders AND compiles ---------------
+        for t in templates:
+            if t.id == "plain":
+                continue
+            t_tex = render_tex(t, profile)
+            failures += not check(
+                f"render[{t.id}]: no slot markers survive",
+                "%HERMES" not in t_tex,
+            )
+            failures += not check(
+                f"render[{t.id}]: content present",
+                "Acme Corp" in t_tex,
+            )
+            if not find_tectonic():
+                continue
+            with tempfile.TemporaryDirectory() as build:
+                main_tex = stage(t, Path(build))
+                main_tex.write_text(t_tex, encoding="utf-8", newline="\n")
+                fc = None
+                if t.fontconfig and (Path(build) / t.fontconfig).exists():
+                    fc = str(Path(build) / t.fontconfig)
+                r = build_tex(main_tex, Path(build), engine=t.engine, fontconfig=fc)
+                failures += not check(
+                    f"build[{t.id}]: compiles to PDF",
+                    r.ok,
+                    "; ".join(r.errors)[:600],
+                )
+                failures += not check(
+                    f"build[{t.id}]: has pages",
+                    r.pages is not None and r.pages >= 1,
+                    f"pages={r.pages}",
+                )
+
+    print()
+    if failures:
+        print(f"{failures} check(s) FAILED")
+        return 1
+    print("all checks passed")
+    return 0
+
+
+def test_tools_end_to_end() -> int:
+    """Exercise the tool interface the way an agent would.
+
+    This path is the one that broke: a targeted build needs the match report
+    to carry its entries, and the build must copy the PDF out of the work
+    directory before the work directory is removed.
+    """
+    import json as _json
+
+    from . import (career_build, career_init, career_ingest, career_match,
+                   career_profile)
+
+    failures = 0
+    with tempfile.TemporaryDirectory() as tmp:
+        ws = str(Path(tmp) / "career")
+        from .profile import Workspace
+        ws_obj = Workspace(Path(ws))
+
+        def check(label, condition, detail=""):
+            nonlocal failures
+            ok = bool(condition)
+            print(f"[{'PASS' if ok else 'FAIL'}] {label}"
+                  + (f" — {detail}" if detail and not ok else ""))
+            if not ok:
+                failures += 1
+            return ok
+
+        out = _json.loads(career_init({"path": ws}))
+        check("tools: init creates a workspace", out.get("ok"), str(out)[:200])
+        check("tools: init returns the first question",
+              bool(out.get("next_question")))
+
+        out = _json.loads(career_ingest({
+            "text": "Jane Doe, Senior Engineer. Built a CUDA renderer.",
+            "source": "https://example.com/cv", "kind": "resume",
+            "workspace": ws,
+        }))
+        check("tools: ingest stores a source", out.get("status") == "ingested",
+              str(out)[:200])
+        check("tools: ingest returns a hash", len(out.get("sha256", "")) == 64)
+
+        # Re-ingesting identical content must be a no-op, not a second file.
+        out2 = _json.loads(career_ingest({
+            "text": "Jane Doe, Senior Engineer. Built a CUDA renderer.",
+            "source": "https://example.com/cv", "kind": "resume",
+            "workspace": ws,
+        }))
+        check("tools: re-ingest is a no-op",
+              out2.get("status") == "unchanged", str(out2)[:200])
+
+        # A changed body must be stored as a NEW document, not overwrite.
+        out3 = _json.loads(career_ingest({
+            "text": "Jane Doe, Senior Engineer. Built a CUDA renderer. Now V2.",
+            "source": "https://example.com/cv", "kind": "resume",
+            "workspace": ws,
+        }))
+        check("tools: changed source becomes a new document",
+              out3.get("status") == "ingested"
+              and out3.get("path") != out.get("path"),
+              str(out3)[:200])
+
+        # The stored hashes must verify — a mismatch here means the hash and
+        # the written body disagree.
+        from .workspace import verify_raw
+        drift = [r for r in verify_raw(ws_obj) if r["status"] != "ok"]
+        check("tools: raw hashes verify (no phantom drift)", not drift,
+              str(drift)[:300])
+
+        patch = {
+            "person": {
+                "name": {"first": "Jane", "last": "Doe"},
+                "tagline": "Senior Graphics Engineer",
+                "summary": "Engineer who ships rendering systems.",
+                "email": "jane@example.com",
+                "location": "Portland, Oregon, USA",
+                "links": [{"label": "janedoe",
+                           "url": "https://github.com/janedoe",
+                           "icon": "github"}],
+            },
+            "experience": [{
+                "id": "acme", "role": "Senior Engineer", "org": "Acme Corp",
+                "location": "Remote", "start": "Mar 2020", "end": "Present",
+                "bullets": [{"text": "Built a **CUDA** rendering pipeline."}],
+                "tags": ["CUDA", "C++"], "priority": 90,
+            }],
+            "projects": [{"id": "tool", "title": "Toolkit", "date": "2023"}],
+            "education": [{"id": "state", "degree": "B.Sc. Computer Science",
+                           "org": "State University"}],
+            "skills": [{"label": "Languages", "items": ["C++", "Python"]}],
+            "milestones": [{"title": "Shipped it", "date": "2024",
+                            "icon": "trophy"}],
+        }
+        out = _json.loads(career_profile({
+            "action": "update", "patch": patch, "workspace": ws}))
+        check("tools: profile update succeeds", out.get("ok"), str(out)[:300])
+
+        out = _json.loads(career_profile({
+            "action": "read", "workspace": ws}))
+        check("tools: profile read returns the data",
+              out.get("profile", {}).get("person", {}).get("name", {}).get("first")
+              == "Jane", str(out)[:200])
+
+        # An invalid patch must be rejected, not written.
+        out = _json.loads(career_profile({
+            "action": "update", "workspace": ws,
+            "patch": {"person": {"name": {"first": "OnlyFirst"}}}}))
+        check("tools: invalid patch is rejected", "error" in out, str(out)[:200])
+
+        jd = ("We are hiring a CUDA rendering engineer. Requirements: C++, "
+              "GPU programming, Docker, Python. Nice to have: Vulkan.")
+        out = _json.loads(career_match({
+            "job_description": jd, "target": "acme", "workspace": ws}))
+        check("tools: match succeeds", out.get("ok"), str(out)[:200])
+        check("tools: match reports unmatched terms",
+              "vulkan" in out["report"]["unmatched_terms"],
+              str(out["report"]["unmatched_terms"]))
+
+        out = _json.loads(career_build({
+            "target": "acme", "template": "yaac", "workspace": ws}))
+        check("tools: targeted build succeeds", out.get("ok"), str(out)[:400])
+        check("tools: targeted build produces a PDF",
+              bool(out.get("pdf")) and Path(out["pdf"]).exists(),
+              str(out.get("pdf")))
+        check("tools: targeted build has pages",
+              (out.get("pages") or 0) >= 1, str(out.get("pages")))
+
+        # The untargeted build must work too.
+        out = _json.loads(career_build({
+            "template": "plain", "workspace": ws}))
+        check("tools: untargeted build succeeds", out.get("ok"),
+              str(out)[:300])
+
+    print()
+    if failures:
+        print(f"{failures} tool check(s) FAILED")
+        return 1
+    print("all tool checks passed")
+    return 0
+
+
+if __name__ == "__main__":
+    rc = main()
+    if rc == 0:
+        rc = test_tools_end_to_end()
+    sys.exit(rc)

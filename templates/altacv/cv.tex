@@ -1,0 +1,93 @@
+% AltaCV — a two-column CV with a dashed-rule sidebar.
+%
+% Template class: altacv (LPPL 1.3+), by LianTze Lim. The class is vendored
+% next to this file.
+%
+% The slot markers below are replaced with the profile's content. Everything
+% outside them is ordinary LaTeX that you can edit freely.
+%
+% Build:  tectonic cv.tex
+\documentclass[10pt,letterpaper,withhyper]{altacv}
+
+% Page layout.
+\geometry{left=1.25cm,right=1.25cm,top=1.5cm,bottom=1.5cm,columnsep=1.2cm}
+
+% paracol: two independent, paginating columns.
+\usepackage{paracol}
+
+% Fonts. Both families are vendored in ./fonts/, so the build is reproducible
+% on any machine with no system font installation.
+\iftutex
+  \setmainfont{RobotoSlab}
+    [ Path = {fonts/}, Extension = .ttf ]
+  \setsansfont{Lato}
+    [ Path = {fonts/}, Extension = .ttf,
+      BoldFont = Lato-Bold, ItalicFont = Lato-Italic,
+      BoldItalicFont = Lato-BoldItalic ]
+  \renewcommand{\familydefault}{\sfdefault}
+\else
+  \usepackage[rm]{roboto}
+  \usepackage[defaultsans]{lato}
+  \renewcommand{\familydefault}{\sfdefault}
+\fi
+
+% ---- Palette: swap these to re-brand the whole CV ----
+\definecolor{SlateGrey}{HTML}{2E2E2E}
+\definecolor{LightGrey}{HTML}{666666}
+\definecolor{DarkPastelRed}{HTML}{450808}
+\definecolor{PastelRed}{HTML}{8F0D0D}
+\definecolor{GoldenEarth}{HTML}{E7D192}
+\colorlet{name}{black}
+\colorlet{tagline}{PastelRed}
+\colorlet{heading}{DarkPastelRed}
+\colorlet{headingrule}{GoldenEarth}
+\colorlet{subheading}{PastelRed}
+\colorlet{accent}{PastelRed}
+\colorlet{emphasis}{SlateGrey}
+\colorlet{body}{LightGrey}
+
+% Font sizing.
+\renewcommand{\namefont}{\Huge\rmfamily\bfseries}
+\renewcommand{\personalinfofont}{\footnotesize}
+\renewcommand{\cvsectionfont}{\LARGE\rmfamily\bfseries}
+\renewcommand{\cvsubsectionfont}{\large\bfseries}
+
+% Bullets / markers.
+\renewcommand{\cvItemMarker}{{\small\textbullet}}
+\renewcommand{\cvRatingMarker}{\faCircle}
+
+\begin{document}
+
+%HERMES:SLOT identity
+%HERMES:END
+
+\makecvheader
+
+% Left/right column ratio. The left column carries the traditional career;
+% the right carries everything else.
+\columnratio{0.6}
+\begin{paracol}{2}
+
+%HERMES:SLOT experience
+%HERMES:END
+
+%HERMES:SLOT projects
+%HERMES:END
+
+\switchcolumn
+
+%HERMES:SLOT skills
+%HERMES:END
+
+%HERMES:SLOT milestones
+%HERMES:END
+
+%HERMES:SLOT education
+%HERMES:END
+
+%HERMES:SLOT languages
+%HERMES:END
+
+\end{paracol}
+
+\end{document}

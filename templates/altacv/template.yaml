@@ -1,0 +1,12 @@
+id: altacv
+name: "AltaCV"
+description: "Two-column CV with a dashed-rule sidebar. Good for a dense, at-a-glance layout."
+dialect: altacv
+engine: xelatex
+main: cv.tex
+class_files:
+  - altacv.cls
+fontconfig: fonts.conf
+fonts_dir: fonts
+columns: 2
+page_budget: 2

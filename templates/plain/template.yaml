@@ -1,0 +1,8 @@
+id: plain
+name: "Plain"
+description: "A plain one-column article CV. The bootstrap template: use it to start a new layout."
+dialect: plain
+engine: xelatex
+main: cv.tex
+columns: 1
+page_budget: 2

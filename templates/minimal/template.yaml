@@ -1,0 +1,11 @@
+id: minimal
+name: "Minimal"
+description: "A two-column CV with a dark info sidebar, a header band, and tight typographic rhythm."
+dialect: minimal
+engine: xelatex
+main: cv.tex
+fontconfig: fonts.conf
+fonts_dir: fonts
+assets_dir: assets
+columns: 2
+page_budget: 2

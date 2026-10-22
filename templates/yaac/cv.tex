@@ -1,0 +1,56 @@
+% YAAC — Another Awesome CV.
+%
+% Template class: yaac-another-awesome-cv (LPPL 1.3c), by Christophe Roger
+% (Darwiin). The class is vendored next to this file.
+%
+% The slot markers below are replaced with the profile's content. Everything
+% outside them is ordinary LaTeX that you can edit freely.
+%
+% Build:  tectonic cv.tex
+\documentclass[letterpaper,localFont,alternative,red]{yaac-another-awesome-cv}
+
+% Accent colour. The class's `red' default is b30000; change the hex to
+% re-brand the whole CV.
+\definecolor{basecolor}{HTML}{8F0D0D}
+
+% Column geometry for US Letter. The class's defaults assume A4, so these
+% are overridden here.
+\setlength{\leftcolumn}{2.4cm}
+\setlength{\rightcolumnlength}{14.2cm}
+
+% A keyword table: <2.4cm label> <rest> description.
+\newenvironment{keywordstable}{%
+  \begin{tabular}{>{\raggedleft\arraybackslash}p{\leftcolumn}p{\dimexpr\textwidth-\leftcolumn-1em}}
+}{%
+  \end{tabular}
+}
+
+\begin{document}
+
+%HERMES:SLOT identity
+%HERMES:END
+
+\makecvheader
+
+%HERMES:SLOT summary
+%HERMES:END
+
+%HERMES:SLOT skills
+%HERMES:END
+
+%HERMES:SLOT experience
+%HERMES:END
+
+%HERMES:SLOT projects
+%HERMES:END
+
+%HERMES:SLOT education
+%HERMES:END
+
+%HERMES:SLOT milestones
+%HERMES:END
+
+%HERMES:SLOT languages
+%HERMES:END
+
+\end{document}

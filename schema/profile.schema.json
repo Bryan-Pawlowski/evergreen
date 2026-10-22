@@ -1,0 +1,200 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/hermes-agent-plugins/evergreen/schema/profile.schema.json",
+  "title": "Evergreen career profile",
+  "description": "Structured source of truth for one person's career data. Markdown notes under notes/ carry prose nuance; this file carries the facts a CV is rendered from.",
+  "type": "object",
+  "required": ["schema_version", "person"],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": { "const": 1 },
+    "person": {
+      "type": "object",
+      "required": ["name", "tagline"],
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "type": "object",
+          "required": ["first", "last"],
+          "additionalProperties": false,
+          "properties": {
+            "first": { "type": "string" },
+            "last": { "type": "string" }
+          }
+        },
+        "tagline": { "type": "string" },
+        "summary": { "type": "string" },
+        "email": { "type": "string" },
+        "phone": { "type": "string" },
+        "location": { "type": "string" },
+        "photo": { "type": ["string", "null"] },
+        "links": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["label", "url"],
+            "additionalProperties": false,
+            "properties": {
+              "label": { "type": "string" },
+              "url": { "type": "string" },
+              "icon": { "type": ["string", "null"] }
+            }
+          }
+        }
+      }
+    },
+    "experience": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/experience" }
+    },
+    "projects": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/project" }
+    },
+    "education": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/education" }
+    },
+    "skills": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/skillGroup" }
+    },
+    "milestones": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/milestone" }
+    },
+    "languages": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["name"],
+        "additionalProperties": false,
+        "properties": {
+          "name": { "type": "string" },
+          "level": { "type": ["string", "null"] }
+        }
+      }
+    },
+    "sections": {
+      "description": "User-defined sections, rendered into the slot named 'section:<id>'.",
+      "type": "array",
+      "items": { "$ref": "#/$defs/customSection" }
+    }
+  },
+  "$defs": {
+    "inlineMarkup": {
+      "description": "Plain text with a small inline markup. **bold**, _italic_, `code`, [label](url). Never raw LaTeX: the renderer escapes and converts.",
+      "type": "string"
+    },
+    "bullet": {
+      "type": "object",
+      "required": ["text"],
+      "additionalProperties": false,
+      "properties": {
+        "text": { "$ref": "#/$defs/inlineMarkup" },
+        "url": { "type": ["string", "null"] }
+      }
+    },
+    "experience": {
+      "type": "object",
+      "required": ["id", "role", "org"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$" },
+        "role": { "type": "string" },
+        "org": { "type": "string" },
+        "location": { "type": ["string", "null"] },
+        "start": { "type": ["string", "null"] },
+        "end": { "type": ["string", "null"] },
+        "summary": { "$ref": "#/$defs/inlineMarkup" },
+        "bullets": { "type": "array", "items": { "$ref": "#/$defs/bullet" } },
+        "tags": { "type": "array", "items": { "type": "string" } },
+        "visible": { "type": "boolean" },
+        "priority": {
+          "description": "0-100, used by the job-description matcher to rank this entry. Higher wins when space is tight.",
+          "type": "number"
+        }
+      }
+    },
+    "project": {
+      "type": "object",
+      "required": ["id", "title"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$" },
+        "title": { "type": "string" },
+        "subtitle": { "type": ["string", "null"] },
+        "date": { "type": ["string", "null"] },
+        "bullets": { "type": "array", "items": { "$ref": "#/$defs/bullet" } },
+        "tags": { "type": "array", "items": { "type": "string" } },
+        "url": { "type": ["string", "null"] },
+        "visible": { "type": "boolean" },
+        "priority": { "type": "number" }
+      }
+    },
+    "education": {
+      "type": "object",
+      "required": ["id", "degree", "org"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$" },
+        "degree": { "type": "string" },
+        "org": { "type": "string" },
+        "start": { "type": ["string", "null"] },
+        "end": { "type": ["string", "null"] },
+        "detail": { "$ref": "#/$defs/inlineMarkup" },
+        "visible": { "type": "boolean" },
+        "priority": { "type": "number" }
+      }
+    },
+    "skillGroup": {
+      "type": "object",
+      "required": ["label", "items"],
+      "additionalProperties": false,
+      "properties": {
+        "label": { "type": "string" },
+        "items": { "type": "array", "items": { "type": "string" } },
+        "visible": { "type": "boolean" },
+        "priority": { "type": "number" }
+      }
+    },
+    "milestone": {
+      "type": "object",
+      "required": ["title"],
+      "additionalProperties": false,
+      "properties": {
+        "title": { "type": "string" },
+        "date": { "type": ["string", "null"] },
+        "detail": { "$ref": "#/$defs/inlineMarkup" },
+        "icon": { "type": ["string", "null"] },
+        "visible": { "type": "boolean" },
+        "priority": { "type": "number" }
+      }
+    },
+    "customSection": {
+      "type": "object",
+      "required": ["id", "title"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$" },
+        "title": { "type": "string" },
+        "items": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["title"],
+            "additionalProperties": false,
+            "properties": {
+              "title": { "type": "string" },
+              "subtitle": { "type": ["string", "null"] },
+              "date": { "type": ["string", "null"] },
+              "bullets": { "type": "array", "items": { "$ref": "#/$defs/bullet" } }
+            }
+          }
+        },
+        "visible": { "type": "boolean" },
+        "priority": { "type": "number" }
+      }
+    }
+  }
+}

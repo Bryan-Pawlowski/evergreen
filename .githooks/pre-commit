@@ -1,0 +1,46 @@
+#!/bin/sh
+# Pre-commit hook: refuse a commit that would ship personal data.
+#
+# A plugin repo is cloned, copied, and redistributed. One committed email
+# address or local path leaks to every installer. This hook runs the same
+# checker CI runs, against the staged content.
+#
+# Install it with:
+#   git config core.hooksPath .githooks
+#
+# Bypass with --no-verify only when you know the finding is a false positive
+# (and add an ALLOWLIST entry to scripts/check_no_user_data.py so the next
+# person does not hit it too).
+
+set -e
+
+REPO_ROOT=$(git rev-parse --show-toplevel)
+CHECKER="$REPO_ROOT/scripts/check_no_user_data.py"
+
+if [ ! -f "$CHECKER" ]; then
+    exit 0
+fi
+
+# Prefer the interpreter the repo was developed with; fall back to python3,
+# then python.
+PY=""
+for candidate in "$HERMES_PYTHON" python3 python; do
+    if [ -n "$candidate" ] && command -v "$candidate" >/dev/null 2>&1; then
+        PY="$candidate"
+        break
+    fi
+done
+
+if [ -z "$PY" ]; then
+    echo "pre-commit: no python interpreter found; skipping the data check." >&2
+    exit 0
+fi
+
+if ! "$PY" "$CHECKER" --staged; then
+    echo "" >&2
+    echo "pre-commit: refusing to commit personal data." >&2
+    echo "Fix it, or add an explicit ALLOWLIST entry in scripts/check_no_user_data.py." >&2
+    exit 1
+fi
+
+exit 0

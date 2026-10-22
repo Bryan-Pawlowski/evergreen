@@ -1,0 +1,26 @@
+# Normalize line endings in the repository; check out with the platform's
+# native endings. This keeps the working tree comfortable on Windows without
+# letting CRLF creep into the stored blobs, which matters for the LaTeX
+# templates (a stray CR can break a build) and for diffs.
+
+* text=auto eol=lf
+
+# Windows checkouts get CRLF for the files a Windows user will edit.
+*.bat text eol=crlf
+*.cmd text eol=crlf
+*.ps1 text eol=crlf
+
+# Binary assets — never touched.
+*.ttf binary
+*.otf binary
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.pdf binary
+*.cls binary
+
+# Keep Python and shell scripts LF even on Windows: the shebang matters,
+# and Python is fine with LF everywhere.
+*.py text eol=lf
+*.sh text eol=lf

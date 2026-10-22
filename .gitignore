@@ -1,0 +1,76 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+dist/
+*.egg-info/
+.venv/
+venv/
+env/
+
+# Test / tooling caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# LaTeX build intermediates
+# (the fonts and .cls files under templates/ ARE tracked — they are what makes
+#  a build reproducible on a machine with no TeX distribution installed)
+*.aux
+*.log
+*.out
+*.toc
+*.lof
+*.lot
+*.fls
+*.fdb_latexmk
+*.synctex.gz
+*.xdv
+*.bbl
+*.blg
+*.nav
+*.snm
+*.vrb
+*.run.xml
+*.spl
+*.tuc
+tectonic-cache/
+
+# A workspace created in the plugin directory by mistake
+# (`hermes career init .`). The real workspaces live elsewhere; these are
+# root-anchored so an example workspace under examples/ is still tracked.
+/profile.yaml
+/profile.yml
+/profile.json
+/raw/
+/notes/
+/targets/
+/out/
+/.evergreen/
+/templates.local/
+
+# Secrets — a plugin must never carry credentials
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+id_rsa
+id_ed25519
+
+# Editor / OS cruft
+.DS_Store
+Thumbs.db
+desktop.ini
+*.swp
+*.swo
+*~
+.idea/
+.vscode/
+*.orig
+*.rej

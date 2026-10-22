@@ -1,0 +1,12 @@
+id: yaac
+name: "YAAC — Another Awesome CV"
+description: "Class-driven one-column CV with a keyword table, a work-history longtable, and a projects block."
+dialect: yaac
+engine: xelatex
+main: cv.tex
+class_files:
+  - yaac-another-awesome-cv.cls
+fontconfig: fonts.conf
+fonts_dir: fonts
+columns: 1
+page_budget: 2

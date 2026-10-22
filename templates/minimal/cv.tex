@@ -1,0 +1,197 @@
+% Minimal — a two-column CV with a dark info sidebar and a header band.
+%
+% The layout is drawn with eso-pic: a full-height dark LEFT column on every
+% page, a light header band on page 1, and the content column on white.
+%
+% The slot markers below are replaced with the profile's content. Everything
+% outside them is ordinary LaTeX that you can edit freely.
+%
+% Build:  tectonic cv.tex
+\documentclass[10pt,letterpaper]{article}
+
+\usepackage{eso-pic}
+\usepackage{graphicx}
+\usepackage{geometry}
+\usepackage{xcolor}
+\usepackage[T1]{fontenc}
+\usepackage{fontawesome5}
+\usepackage{hyperref}
+\usepackage{hyphenat}
+\usepackage{enumitem}
+\usepackage{fontspec}
+\usepackage{multicol}
+\usepackage{paracol}
+
+% \emergencystretch lets TeX stretch interword space a little to avoid an
+% overfull line, instead of letting the line run past the column edge.
+\setlength{\emergencystretch}{2em}
+
+\setmainfont{RobotoSlab}[ Path = {fonts/}, Extension = .ttf, HyphenChar=45 ]
+\setsansfont{Lato}
+  [ Path = {fonts/}, Extension = .ttf,
+    BoldFont = Lato-Bold, ItalicFont = Lato-Italic, HyphenChar=45 ]
+\renewcommand{\familydefault}{\sfdefault}
+
+% ---- palette ----
+\definecolor{Band}{HTML}{1E2531}
+\definecolor{Ink}{HTML}{1F242E}
+\definecolor{InkSoft}{HTML}{5C6473}
+\definecolor{IcoCol}{HTML}{3E4657}
+\definecolor{RuleGold}{HTML}{C29A2E}
+\definecolor{Paper}{HTML}{FFFFFF}
+\definecolor{Mist}{HTML}{C9CFDB}
+\definecolor{GoldenEarth}{HTML}{E7D192}
+\definecolor{ColDark}{HTML}{1E2531}
+\definecolor{ColWash}{HTML}{DDE3EC}
+
+\geometry{
+  paperwidth=612pt, paperheight=792pt,
+  left=20pt, right=20pt,
+  top=0pt, bottom=16pt,
+  nohead, nofoot, nomarginpar, headheight=0pt,
+  columnsep=18pt
+}
+
+% Line breaking in the right column. This build has NO English hyphenation
+% pattern files, and fontspec's default HyphenChar=-1 disables the hyphen
+% char for OpenType fonts, so ONLY words containing a real hyphen can break.
+% A slash is not a legal break point, so "tech/design" must be "tech-design".
+
+\setlength{\parindent}{0pt}
+\setlength{\baselineskip}{1.15\baselineskip}
+
+% header band (page 1): full-bleed light slate, thin gold bottom edge.
+\newlength{\bandH}
+\setlength{\bandH}{100pt}
+\newcommand{\drawBand}{%
+  \AddToShipoutPictureBG*{%
+    \AtPageUpperLeft{\mbox{\raisebox{-\bandH}{%
+      \includegraphics[width=\paperwidth,height=\bandH]{assets/banner.png}}}}%
+  }%
+}
+
+% dark left column: the LEFT column plus the gutter, full page height, every
+% page. The wash panel is sized to the left column + gutter so every gold
+% rule stays inside it. colbg.png is a flat fill, so any width is a clean
+% stretch.
+\newcommand{\leftcolW}{254.8pt}
+\newcommand{\washW}{295pt}
+\newcommand{\drawDarkCol}{%
+  \AddToShipoutPictureBG{%
+    \AtPageUpperLeft{\mbox{\raisebox{-\paperheight}{%
+      \includegraphics[width=\washW,height=\paperheight]{assets/colbg.png}}}}%
+  }%
+}
+\AtBeginDocument{\drawDarkCol}
+\pagestyle{empty}   % MUST be in the preamble: eso-pic patches \pagestyle, and a
+                    % body \pagestyle{empty} overrides the patch, leaving
+                    % \AddToShipoutPictureBG undefined at \begin{document}
+
+% ---- shared macros, default = RIGHT (dark-ink) colors ----
+\newcommand{\faIco}[1]{\makebox[1.15em][l]{\color{IcoCol}#1}\hspace{0.5em}}
+
+% ---- section rhythm (tunable) --------------------------------------------
+% \secspace  air ABOVE a section heading.
+% \rulegap   air between the heading and its gold rule.
+% \headgap   air between the rule and the section's first line.
+\newcommand{\secspace}{12pt}
+\newcommand{\rulegap}{4pt}
+\newcommand{\headgap}{3pt}
+\newcommand{\secheadrule}[2]{%
+  \nobreak\vspace{\rulegap}\nobreak\nointerlineskip
+  {\color{#2}\rule{#1}{0.6pt}}\par\nobreak\vspace{\headgap}}
+\newcommand{\sechead}[1]{%
+  \par\vspace{\secspace}%
+  {\large\color{Ink}\rmfamily\bfseries #1\par}%
+  \secheadrule{\linewidth}{RuleGold}}
+\newcommand{\secheadfirst}[1]{%
+  {\large\color{Ink}\rmfamily\bfseries #1\par}%
+  \secheadrule{\linewidth}{RuleGold}}
+\newcommand{\jobhead}[1]{\par\vspace{\jobspace}{\color{Ink}\rmfamily\bfseries #1}\par\nobreak\vspace{\titlegap}}
+\newcommand{\jobheadfirst}[1]{{\color{Ink}\rmfamily\bfseries #1}\par\nobreak\vspace{\titlegap}}
+\newcommand{\jobdates}[1]{{\small\color{InkSoft} #1}\par\nobreak}
+
+% ---- job/project block rhythm (right column) -----------------------------
+% Hierarchy rule: \jobspace > \bulletspace > \itemspace, and \titlegap
+% visibly separates the title from its own details.
+\newcommand{\jobspace}{8pt}
+\newcommand{\titlegap}{3pt}
+\newcommand{\bulletspace}{4pt}
+\newcommand{\itemspace}{1pt}
+
+% One environment for every bullet list under a job or project title, so the
+% indent + rhythm are tuned in ONE place.
+\newenvironment{jobitems}{%
+  \par\vspace{\bulletspace}%
+  \begin{itemize}[leftmargin=12pt,labelwidth=10pt,labelsep=4pt,%
+                   itemsep=\itemspace,topsep=0pt,parsep=0pt]}{%
+  \end{itemize}}
+
+\begin{document}
+\drawBand
+
+% ---- header (on the light band) ----
+\begin{minipage}[t][\bandH]{\textwidth}
+  \vspace{4pt}
+%HERMES:SLOT identity
+%HERMES:END
+\end{minipage}
+
+% ---- LEFT column: info, on a light-wash background (dark ink) ----
+% The left column carries short labels, chips and contact lines; the right
+% column carries long bullet sentences that need the room.
+\columnratio{0.50}
+\begin{paracol}{2}
+\begingroup
+\color{InkSoft}
+% The left column's TEXT measure ran to the full column width, which is
+% ~1.9pt PAST the wash panel's edge. Reserve 20pt on the right of every
+% line so the text's right edge lands on the rules' right edge.
+\rightskip=20pt
+\hyphenation{none}   % the left column holds short labels and skill chips
+\renewcommand{\faIco}[1]{\makebox[1.15em][l]{\color{RuleGold}#1}\hspace{0.5em}}
+% The left column's rule is inset 20pt on its RIGHT (not \linewidth), so it
+% mirrors the right column's page-margin inset.
+\renewcommand{\secheadrule}[2]{%
+  \nobreak\vspace{\rulegap}\nobreak\nointerlineskip
+  {\color{#2}\rule{\dimexpr#1-20pt\relax}{0.6pt}}\par\nobreak\vspace{\headgap}}
+\renewcommand{\sechead}[1]{%
+  \par\vspace{\secspace}%
+  {\large\color{Ink}\rmfamily\bfseries #1\par}%
+  \secheadrule{\linewidth}{RuleGold}}
+\renewcommand{\secheadfirst}[1]{%
+  {\large\color{Ink}\rmfamily\bfseries #1\par}%
+  \secheadrule{\linewidth}{RuleGold}}
+\renewcommand{\jobhead}[1]{\par\smallskip{\color{Ink}\rmfamily\bfseries #1}\par\nobreak}
+\renewcommand{\jobdates}[1]{{\small\color{InkSoft} #1}\par\nobreak}
+\newcommand{\lchip}[1]{\faIco{\faCircleNotch}#1\par\nobreak}
+
+%HERMES:SLOT links
+%HERMES:END
+
+%HERMES:SLOT education
+%HERMES:END
+
+%HERMES:SLOT skills
+%HERMES:END
+
+%HERMES:SLOT milestones
+%HERMES:END
+
+%HERMES:SLOT languages
+%HERMES:END
+\endgroup
+
+\switchcolumn
+
+% ---- RIGHT column: content, on white (dark ink) ----
+\color{Ink}
+
+%HERMES:SLOT experience
+%HERMES:END
+
+%HERMES:SLOT projects
+%HERMES:END
+
+\end{paracol}
+\end{document}
