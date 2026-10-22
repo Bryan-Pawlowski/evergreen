@@ -1,0 +1,82 @@
+#!/bin/sh
+# Pre-push hook: refuse to push a commit that would go red on the remote.
+#
+# Required-status-checks gates MERGES into main, not direct pushes — GitHub
+# cannot run checks before the code exists. This hook runs the same checks CI
+# runs, *before* the push leaves, so a broken commit never lands on main to
+# show up as a red badge for every installer. It mirrors the four CI jobs:
+#   check_no_user_data  (leak: no personal emails/paths)
+#   check_line_endings  (CRLF guard)
+#   ruff check          (pyflakes, pinned to the CI version)
+#   selftest            (compile + render + parity for every template)
+#
+# Install it with:
+#   git config core.hooksPath .githooks
+#
+# Bypass with `git push --no-verify` only when the failure is a known local
+# limitation (no tectonic, no uvx) and CI will be the final witness.
+
+set -u
+
+REPO_ROOT=$(git rev-parse --show-toplevel)
+cd "$REPO_ROOT"
+
+fail() {
+    echo "" >&2
+    echo "pre-push: refusing to push — $1" >&2
+    echo "Fix it, or push --no-verify to let CI be the witness." >&2
+    exit 1
+}
+
+# Resolve a Python interpreter the same way the pre-commit hook does.
+PY=""
+for candidate in "$HERMES_PYTHON" python3 python; do
+    if [ -n "$candidate" ] && command -v "$candidate" >/dev/null 2>&1; then
+        PY="$candidate"
+        break
+    fi
+done
+
+if [ -z "$PY" ]; then
+    echo "pre-push: no python interpreter found; skipping local checks." >&2
+    echo "(CI will still run them on the pushed commits.)" >&2
+    exit 0
+fi
+
+S="scripts"
+
+# 1. Leak check — full tree, not just staged (a push ships everything).
+if [ -f "$S/check_no_user_data.py" ] && ! "$PY" "$S/check_no_user_data.py"; then
+    fail "the leak check found personal data in the tree."
+fi
+
+# 2. Line endings — the CRLF guard across all tracked files.
+if [ -f "$S/check_line_endings.py" ] && ! "$PY" "$S/check_line_endings.py"; then
+    fail "the line-ending check found CRLF in a tracked file."
+fi
+
+# 3. Ruff (pyflakes) — match the version CI pins so the two agree.
+if command -v uvx >/dev/null 2>&1; then
+    RUFF="uvx ruff@0.12.0"
+elif "$PY" -m ruff --version >/dev/null 2>&1; then
+    RUFF="$PY -m ruff"
+else
+    RUFF=""
+fi
+if [ -n "$RUFF" ]; then
+    if ! $RUFF check .; then
+        fail "ruff found a real defect (undefined name, dead import, ...)."
+    fi
+else
+    echo "pre-push: ruff not available (no uvx, no 'pip ruff'); skipping — CI will run it." >&2
+fi
+
+# 4. Selftest — the full compile + render + parity suite. Needs tectonic.
+if ! "$PY" -m evergreen.selftest; then
+    if command -v tectonic >/dev/null 2>&1 || [ -x "$HOME/.local/bin/tectonic" ]; then
+        fail "selftest failed — a template will not build or render correctly."
+    fi
+    echo "pre-push: tectonic is not installed; selftest could not run — letting the push through (CI will run the full suite)." >&2
+fi
+
+exit 0

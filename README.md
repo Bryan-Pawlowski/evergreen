@@ -34,8 +34,17 @@ change to the profile, and the two can never drift apart.
 ## Install
 
 ```bash
-hermes plugins install <owner>/evergreen
+hermes plugins install Bryan-Pawlowski/evergreen
 hermes plugins enable evergreen
+```
+
+That tracks `main` — a commit that is still failing its CI checks is
+reachable to new installs until the fix lands. For a stable install, pin
+the last commit whose checks were all green — the SHA below is updated
+each time a verified-good commit lands:
+
+```bash
+hermes plugins install Bryan-Pawlowski/evergreen --ref d168975dc8f93820ef02de6f677dce158f88be5f
 ```
 
 Or from a local checkout:
