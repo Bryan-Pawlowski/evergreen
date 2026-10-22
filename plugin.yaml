@@ -1,7 +1,7 @@
 name: evergreen
 version: "0.1.0"
 description: "A career workspace and LaTeX CV builder: intake your career history, keep it as structured data, and render a tailored CV to PDF."
-author: "Bryan Pawlowski, Hermes Agent"
+author: "Bryan-Pawlowski"
 license: MIT
 homepage: "https://github.com/hermes-agent-plugins/evergreen"
 tags:

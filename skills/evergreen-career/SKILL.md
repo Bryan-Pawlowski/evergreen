@@ -2,7 +2,7 @@
 name: evergreen-career
 description: "Use when building or updating someone's career workspace: intake, profile, job-description matching, CV generation."
 version: 0.1.0
-author: "Bryan Pawlowski, Hermes Agent"
+author: "Bryan-Pawlowski"
 license: MIT
 platforms: [linux, macos, windows]
 metadata:

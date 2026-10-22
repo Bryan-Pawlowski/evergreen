@@ -92,11 +92,13 @@ EXEMPT_FILES = {
 
 # Paths that legitimately contain an address or a path: the licence headers
 # and the author attribution. These are explicit, not blanket exemptions.
+# The name must match the one used in the commit identity, so a repo that
+# is scanned for leaks does not flag its own attribution.
 ALLOWLIST: dict[str, list[str]] = {
-    "LICENSE": ["Bryan Pawlowski"],
-    "plugin.yaml": ["Bryan Pawlowski"],
-    "skills/evergreen-career/SKILL.md": ["Bryan Pawlowski"],
-    "skills/evergreen-cvcraft/SKILL.md": ["Bryan Pawlowski"],
+    "LICENSE": ["Bryan-Pawlowski"],
+    "plugin.yaml": ["Bryan-Pawlowski"],
+    "skills/evergreen-career/SKILL.md": ["Bryan-Pawlowski"],
+    "skills/evergreen-cvcraft/SKILL.md": ["Bryan-Pawlowski"],
 }
 
 # Files that are data, not source: a template's fonts and class files are

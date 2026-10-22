@@ -2,7 +2,7 @@
 name: evergreen-cvcraft
 description: "Use when writing or debugging LaTeX for an Evergreen CV template: the slot contract, class APIs, and build traps."
 version: 0.1.0
-author: "Bryan Pawlowski, Hermes Agent"
+author: "Bryan-Pawlowski"
 license: MIT
 platforms: [linux, macos, windows]
 metadata:
