@@ -313,11 +313,6 @@ def test_tools_end_to_end() -> int:
     to carry its entries, and the build must copy the PDF out of the work
     directory before the work directory is removed.
     """
-    import json as _json
-
-    from . import (career_build, career_init, career_ingest, career_list,
-                   career_match, career_profile)
-
     failures = 0
     with tempfile.TemporaryDirectory() as tmp:
         # The workspace now lives directly under the Hermes home, so the
@@ -617,7 +612,6 @@ def test_cli_surface() -> int:
     moved to name-based workspaces and the CLI kept the old path argument.
     """
     import argparse
-    import json as _json
     import io
     import contextlib
 

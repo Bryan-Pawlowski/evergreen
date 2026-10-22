@@ -16,20 +16,20 @@ Tools:
 from __future__ import annotations
 
 import json
-import os
 import shutil
 import tempfile
 from pathlib import Path
-from typing import Any
 
 from . import matcher as matcher_mod
 from . import workspace as ws_mod
-from .build import BuildError, build_tex, find_tectonic, tectonic_install_hint
+from .build import build_tex, find_tectonic
+from .build import BuildError, tectonic_install_hint  # noqa: F401  (re-exported)
 from .career import (CareerProfile, CareerProfileError, Workspace,
                       _hermes_home_markers, find_workspace, hermes_home,
                       list_workspaces, validate, validate_workspace_name,
                       workspace_path_for_name)
-from .render import TemplateError, discover_templates, load_template, render_tex, slots_in, stage
+from .render import (TemplateError, discover_templates, render_tex, slots_in, stage)
+from .render import load_template  # noqa: F401  (re-exported)
 
 PLUGIN_ROOT = Path(__file__).resolve().parent.parent
 SHIPPED_TEMPLATES = PLUGIN_ROOT / "templates"
@@ -810,8 +810,10 @@ def _status(ctx=None) -> str:
 
     state = ws_mod.load_checklist(workspace)
     progress = ws_mod.intake_progress(state)
+    # Probe whether the profile loads. Only the raise-or-not matters here —
+    # the loaded object is not needed for the status line.
     try:
-        profile = workspace.load()
+        workspace.load()
         profile_status = "valid"
         profile_error = None
     except CareerProfileError as exc:

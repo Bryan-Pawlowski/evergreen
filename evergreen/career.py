@@ -197,7 +197,10 @@ def _looks_like_career_profile(path: Path) -> bool:
         return False
     try:
         data = load_structured(path)
-    except ProfileError:
+    except CareerProfileError:
+        # An unparseable file is "not a career profile", not an error.
+        # (Previously caught a name that was never defined, which raised
+        # NameError and took the whole listing down.)
         return False
     except Exception:
         return False

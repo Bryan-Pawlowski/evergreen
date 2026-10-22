@@ -16,7 +16,6 @@ from __future__ import annotations
 import re
 import shutil
 from pathlib import Path
-from typing import Any
 
 from . import dialects
 from .career import CareerProfile, SLOTS, load_structured
