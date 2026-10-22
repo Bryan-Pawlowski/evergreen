@@ -1,5 +1,10 @@
 # Evergreen
 
+[![CI](https://github.com/Bryan-Pawlowski/evergreen/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/Bryan-Pawlowski/evergreen/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![Hermes](https://img.shields.io/badge/hermes-%3E%3D0.22.0-6d4aff.svg)](https://github.com/hermes-agent/hermes-agent)
+[![Python](https://img.shields.io/badge/python-3.9%2B-3776ab.svg)](https://www.python.org/)
+
 A **career workspace and LaTeX CV builder** for Hermes.
 
 Evergreen gives an agent a place to hold one person's career data, and turns
