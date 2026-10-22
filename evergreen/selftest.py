@@ -394,11 +394,59 @@ def test_tools_end_to_end() -> int:
               out.get("profile", {}).get("person", {}).get("name", {}).get("first")
               == "Jane", str(out)[:200])
 
-        # An invalid patch must be rejected, not written.
+        # An invalid patch must be rejected, not written. Note this is a
+        # TYPE error, not a missing field: since patches now merge, a
+        # patch that omits a required field no longer invalidates the
+        # profile — it just leaves the field alone.
         out = _json.loads(career_profile({
             "action": "update", "workspace": ws,
-            "patch": {"person": {"name": {"first": "OnlyFirst"}}}}))
+            "patch": {"person": {"name": {"first": 123, "last": "Doe"}}}}))
         check("tools: invalid patch is rejected", "error" in out, str(out)[:200])
+        check("tools: an invalid patch says what is wrong",
+              bool(_json.loads(career_profile({
+                  "action": "update", "workspace": ws,
+                  "patch": {"person": {"name": {"first": 123, "last": "Doe"}}}}))
+                  .get("details")),
+              "the error carried no details")
+
+        # A patch must mean "change what I named". Patching one field of
+        # `person` must not drop the other fields — the whole-object
+        # replacement this used to do made every patch a full rewrite, and
+        # silently dropped required fields.
+        out = _json.loads(career_profile({
+            "action": "update", "workspace": ws,
+            "patch": {"person": {"tagline": "Senior Graphics Engineer"}}}))
+        check("tools: a partial person patch succeeds", out.get("ok"),
+              str(out)[:300])
+        person = _json.loads(career_profile({
+            "action": "read", "workspace": ws}))["profile"]["person"]
+        check("tools: a partial patch changes only what it names",
+              person.get("tagline") == "Senior Graphics Engineer"
+              and person.get("name", {}).get("first") == "Jane"
+              and person.get("email") == "jane@example.com",
+              str(person)[:300])
+
+        # A list of records merges by id; a list of values replaces.
+        out = _json.loads(career_profile({
+            "action": "update", "workspace": ws,
+            "patch": {"experience": [{"id": "acme", "role": "Staff Engineer"}]}}))
+        check("tools: an id-matched entry merges", out.get("ok"), str(out)[:200])
+        entries = _json.loads(career_profile({
+            "action": "read", "workspace": ws}))["profile"]["experience"]
+        check("tools: merging an entry keeps the other fields",
+              len(entries) == 1
+              and entries[0]["role"] == "Staff Engineer"
+              and entries[0]["org"] == "Acme Corp",
+              str(entries)[:300])
+
+        out = _json.loads(career_profile({
+            "action": "update", "workspace": ws,
+            "patch": {"skills": [{"label": "Only", "items": ["Rust"]}]}}))
+        entries = _json.loads(career_profile({
+            "action": "read", "workspace": ws}))["profile"]["skills"]
+        check("tools: an id-less list is replaced, not appended",
+              len(entries) == 1 and entries[0]["label"] == "Only",
+              str(entries)[:200])
 
         jd = ("We are hiring a CUDA rendering engineer. Requirements: C++, "
               "GPU programming, Docker, Python. Nice to have: Vulkan.")

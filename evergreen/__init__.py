@@ -175,12 +175,12 @@ def career_ingest(params: dict, ctx=None, **kw) -> str:
 
 
 def _merge_by_id(existing: list, patch_items: list) -> list:
-    """Merge a list of profile entries by their ``id``.
+    """Merge two lists of profile entries by their ``id``.
 
-    An entry in the patch whose id already exists is merged into it; an entry
-    with a new id is appended. Entries without an id are appended, since there
-    is nothing to match them on. Order is preserved: existing entries keep
-    their position, new ones go at the end.
+    Used only when BOTH lists carry ids on every element. An entry in the
+    patch whose id already exists is merged into it; an entry with a new id
+    is appended. Existing entries keep their position, new ones go at the
+    end.
     """
     result = [dict(e) if isinstance(e, dict) else e for e in existing]
     index = {
@@ -203,6 +203,40 @@ def _merge_by_id(existing: list, patch_items: list) -> list:
                 index[item_id] = len(result)
             result.append(dict(item))
     return result
+
+
+def _merge_value(existing, patch):
+    """Merge a patch value into an existing value.
+
+    The rules, chosen so a patch means "change what I named":
+
+    - **dict into dict** — merge key by key, recursively. So a patch of
+      ``{"person": {"tagline": "x"}}`` changes the tagline and leaves the
+      name, email, and links alone. Replacing the whole dict instead
+      would drop required fields and make every patch a full rewrite.
+    - **list into list** — merge by ``id`` when *both* lists carry an id on
+      every element (the entries that have one: experience, projects,
+      education, milestones, sections). Otherwise replace: a list without
+      ids (skills, languages, links) is a value, not a set of records, so
+      a patch to it is a replacement rather than an append.
+    - **anything else** — replace.
+    """
+    if isinstance(existing, dict) and isinstance(patch, dict):
+        merged = dict(existing)
+        for key, value in patch.items():
+            merged[key] = _merge_value(existing.get(key), value)
+        return merged
+
+    if isinstance(existing, list) and isinstance(patch, list):
+        def all_have_ids(items: list) -> bool:
+            return bool(items) and all(
+                isinstance(i, dict) and i.get("id") for i in items
+            )
+        if all_have_ids(existing) and all_have_ids(patch):
+            return _merge_by_id(existing, patch)
+        return list(patch)
+
+    return patch
 
 
 def career_profile(params: dict, ctx=None, **kw) -> str:
@@ -239,10 +273,7 @@ def career_profile(params: dict, ctx=None, **kw) -> str:
 
     data = profile.to_dict()
     for key, value in patch.items():
-        if isinstance(data.get(key), list) and isinstance(value, list):
-            data[key] = _merge_by_id(data[key], value)
-        else:
-            data[key] = value
+        data[key] = _merge_value(data.get(key), value)
 
     errors = validate(data)
     if errors:
@@ -489,9 +520,13 @@ TOOLS = [
         "name": "career_profile",
         "description": (
             "Read the profile, or update it. The update action takes a patch of "
-            "top-level fields and merges list fields by id, so a single entry "
-            "can be changed without resending the whole list. Invalid patches "
-            "are rejected with the specific validation errors."
+            "top-level fields and merges them: a patch changes only what it "
+            "names, so {\"person\": {\"tagline\": \"x\"}} leaves the name, email "
+            "and links alone. Lists of records (experience, projects, education, "
+            "milestones) merge by id, so one entry can be updated without "
+            "resending the rest; lists of values (skills, languages, links) "
+            "are replaced. Invalid patches are rejected with the specific "
+            "validation errors and nothing is written."
         ),
         "parameters": {
             "type": "object",
