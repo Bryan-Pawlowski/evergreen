@@ -217,6 +217,33 @@ served the plugin copy of another — the gateway caches one module per
 plugin name. When a test profile behaves differently from the default
 profile, check which copy is actually loaded before believing the result.
 
+## A discovery tool must not hide the thing it discovers
+
+`list_workspaces` originally called `load()`, which raises when a career
+profile fails schema validation, and swallowed the exception with a bare
+`continue`. The workspace then vanished from `career_list` entirely.
+
+That is backwards. The listing exists to **find** workspaces, and the
+most likely reason a profile fails to validate is that it is half-filled
+or was hand-edited — exactly when the caller most needs to find it. A
+tool that hides the broken thing cannot tell you it is broken.
+
+**Rule: a discovery tool reports problems, it does not filter them out.**
+An invalid workspace is now listed with `profile_status: "invalid"` and
+the validation error in `profile_error`. `Workspace.exists()` was
+already structural (tolerant of a half-filled profile); the listing has
+to agree with it.
+
+**Rule: `except: continue` in a discovery path is a smell.** If the
+exception carries information the caller needs, attach it to the result
+instead of dropping the result.
+
+**This was found by an agent, not by a test.** The agent created a
+workspace, listed zero, and went and diagnosed the profile-validation
+path by hand. The selftest passed because it only ever listed
+workspaces it had just created. A fixture with a *deliberately invalid*
+profile is what catches this class of bug.
+
 ## The tool schema and the handler are written separately
 
 A tool's declared schema (the JSON the model sees) and the handler that
