@@ -33,15 +33,31 @@ These forks were decided and are no longer open:
   tracked files for emails, phone numbers, and absolute local paths. Wired
   as a pre-commit hook via `core.hooksPath .githooks` and to CI. It is
   verified to pass on the real repo *and* to fail on a planted leak.
-- ☐ **Push to GitHub** and verify the real consumer path:
-  `hermes plugins install owner/repo`. The local-copy install works, but
-  the git-URL path is untested and it is the path a stranger will use.
-- ☐ **Add `templates/minimal/LICENSE.md`** — a note pointing at
+- ☑ **A manifest check that runs.** `scripts/check_manifest.py` is a
+  self-contained subset of Hermes' `plugins validate` checks — required
+  fields, semver, the `requires_hermes` spec, the known-field list, and
+  the declared-vs-registered tool comparison. CI depends on no particular
+  Hermes version, because the PyPI release (0.19.0) lags the git install
+  and has no `validate` subcommand.
+- ☑ **Pushed to GitHub** — `https://github.com/Bryan-Pawlowski/evergreen`
+  (public). The remote is clean and `main` tracks `origin/main`.
+- ☑ **The real consumer path works.** `hermes plugins install
+  https://github.com/Bryan-Pawlowski/evergreen` clones and installs; the
+  installed copy passes the selftest. This was tested after removing the
+  hand-copied local install, so it is the genuine git-URL path.
+- ☑ **CI is green** on GitHub Actions: the `verify` job (selftest +
+  manifest check + leak check) and the `negative-tests` job (plant a leak,
+  plant a broken manifest, assert both are rejected).
+- ☑ **Added `templates/minimal/LICENSE.md`** — a note pointing at
   `templates/LICENSE-FONTS.md` (the minimal template uses no third-party
   class, only the vendored fonts).
-- ☐ **CI**: run `python -m evergreen.selftest`, `hermes plugins validate .`
-  and the leak check on push. The selftest needs tectonic, so CI needs the
-  tectonic install step.
+- ☐ **Run `hermes plugins validate` at release time** — the authoritative
+  gate, against the local Hermes 0.22.3. It passes today; CI uses the
+  self-contained subset instead because the PyPI Hermes is too old to
+  have it.
+- ☐ **Submit to the plugin catalog** — a PR to
+  `NousResearch/hermes-agent` adding `plugin-catalog/evergreen.yaml` with
+  the reviewed commit SHA. Until then, install is by git URL only.
 
 ## 2. Fix a wrong claim in the existing Evergreen skill
 
@@ -60,19 +76,13 @@ These forks were decided and are no longer open:
 
 ## 3. Migrate Evergreen to the new format
 
-- ☐ **Decide where the wiki's prose goes.** The hybrid design says
-  `profile.yaml` holds facts and `notes/` holds nuance. The Evergreen wiki
-  has both: `entities/*.md` carry narrative that the structured profile
-  cannot (the *why* behind a project, the "AI co-driven build" arc). Three
-  options:
-  1. `notes/` holds the entity pages verbatim, and the profile points at
-     them. Most faithful, keeps the wiki intact.
-  2. The profile absorbs the CV-relevant prose; the wiki stays as a
-     private knowledge base the plugin never reads.
-  3. The profile absorbs everything and the wiki is retired.
-  Recommend **(1)**: the plugin does not need to read the notes, so the
-  wiki can stay exactly as it is and the profile simply becomes the
-  render input.
+- ☑ **Decided where the wiki's prose goes: add `profile.yaml` to
+  `evergreen/` in place.** The wiki stays where it is and *is* the prose
+  layer. No move, no copy, no duplication. The plugin never reads notes
+  (decision above), so `wiki/entities/` and a flat `notes/` are equivalent
+  to it. Consequence: the plugin's README must say "notes/ is
+  conventional, not required" — a workspace is any directory with a
+  `profile.yaml`.
 - ☐ **Build `profile.yaml`** from `wiki/` + `raw/resume/resume-2026-10-20.md`.
   Watch the CV-view rule: `paid-local-llm-platform` is `cv_excluded: true`
   and must not appear.
@@ -84,28 +94,43 @@ These forks were decided and are no longer open:
   become a view like the new one, or does it get retired? If Evergreen
   stays as instance #1, it should use the plugin, not a parallel
   hand-maintained set of `.tex` files.
+- ☐ **Ship a scrubbed example workspace** in the plugin repo (decision
+  above). It must carry **no** real personal data — the leak check is the
+  gate, and it will flag anything that slips through.
 
 ## 4. Fill the gaps the design promised
 
 - ☐ **The polish step.** Match-then-polish is half-built: `career_match`
-  does the selection, but nothing rewrites the wording. The design says
-  the LLM rewords *existing bullets only* — never adds a claim. This needs
-  a tool that takes a match report plus reworded bullets, checks that no
-  new facts appeared, and writes the result back. The "no new facts"
-  check is the interesting part: compare the content words of the reworded
-  bullet against the original and flag anything new.
+  does the selection, but nothing rewrites the wording. Per the decision
+  above: the reworded bullets go into a **per-target overlay**
+  (`targets/<name>/overlay.yaml`) holding only the deltas — never into the
+  base profile — and a **validator** mechanically compares a reworded
+  bullet's content words against the original and refuses new ones. The
+  validator is the interesting part: a synonym is not a new fact, but a
+  new technology claim is.
 - ☐ **The `notes/` layer.** The workspace creates `notes/` but nothing
-  reads or writes it. It needs a tool (write a note, list notes, attach a
-  note to a profile entry) and a workflow in the career skill.
+  reads or writes it. It needs a tool (write a note, list notes) and a
+  workflow in the career skill. Per the decision above, it is **write-only
+  for now** — the plugin stores and lists notes but never reads them into
+  a build, so the render path stays deterministic and single-input. Reading
+  notes as polish context is the natural later upgrade.
 - ☐ **The intake checklist is not resumable in practice.** `career_init`
   seeds `.evergreen/intake.json` and `workspace.next_question` exists,
   but the *tool* to mark an item done and get the next question is
   missing. Without it, every session re-asks everything.
-- ☐ **Matcher synonyms.** The matcher is lexical. A bullet saying
-  "shipping" will not match a posting asking for "delivery". A small
-  synonym table (shipping↔delivery, CI↔continuous integration,
-  perf↔performance) would help; a full embedding match would be a
-  different design.
+- ☐ **The matcher gets smarter: better term extraction plus a small
+  shipped synonym table** (decided above). Two parts:
+  1. **Extraction** — weight terms by their *position* in the posting (a
+     "Requirements:" block counts more than the company preamble),
+     extract noun phrases rather than bare words, and stop treating
+     generic tech vocabulary as noise.
+  2. **A synonym table** shipped with the plugin and editable by the user
+     (shipping↔delivery, CI↔continuous integration, perf↔performance).
+     No dependencies, and the deterministic-selection property is
+     preserved. A full embedding match was considered and rejected: it
+     would add a model, a provider, a privacy question (a CV is
+     sensitive), and it would make "deterministic selection" a claim
+     rather than a fact.
 - ☐ **The `unmatched_terms` report is not surfaced anywhere useful.** It
   is the most valuable output of the matcher and it currently only lands
   in a JSON file. It should be prominent in the build output and in the
@@ -113,19 +138,21 @@ These forks were decided and are no longer open:
 
 ## 5. Verification and distribution
 
-- ☐ **CI**: run `python -m evergreen.selftest` and
-  `hermes plugins validate .` on push. The selftest needs tectonic, so CI
-  needs the tectonic install step.
-- ☐ **Clean-profile test**: create a throwaway Hermes profile, install
-  from the git URL, and run `/career init` → `/career build` with no
-  local state. Everything so far has been tested in *this* profile with
-  the plugin copied into place, which does not prove the install path.
+- ☑ **CI is green** on GitHub Actions — the `verify` job (selftest +
+  manifest check + leak check) and the `negative-tests` job (plant a
+  leak, plant a broken manifest, assert both are rejected).
+- ☑ **The git-URL install path works** from a clean state.
+- ☐ **Clean-profile test**: create a throwaway Hermes *profile* (not just
+  a clean plugin install) and run `/career init` → `/career build` with
+  no local state. The install path is proven; the "no local state" path
+  is not.
 - ☐ **Plugin catalog submission**: a PR to
   `NousResearch/hermes-agent` adding `plugin-catalog/evergreen.yaml` with
   the reviewed commit SHA. Until then, install is by git URL only.
-- ☐ **A worked example**: a small `examples/` directory with a filled
+- ☐ **A worked example**: a small `examples/` directory with a scrubbed
   profile and the PDF it produces, so a stranger can see the output
-  without setting anything up.
+  without setting anything up. This is the "scrubbed example workspace"
+  from the decisions above.
 
 ## 6. Deferred / optional
 
@@ -162,3 +189,9 @@ These forks were decided and are no longer open:
 - ☑ `hermes plugins validate` passes; `hermes plugins doctor --ci` exits 0.
 - ☑ Selftest: 37 core checks + 16 tool-level end-to-end checks, all green.
 - ☑ Installed and enabled in the active profile.
+- ☑ **A public GitHub repo** with a real `.gitignore` and `.gitattributes`,
+  an MIT `LICENSE`, a pre-commit leak check, a self-contained manifest
+  check, and green CI on both a positive and a negative test.
+- ☑ **The consumer path is proven**: `hermes plugins install
+  https://github.com/Bryan-Pawlowski/evergreen` works from a clean state,
+  and the installed copy passes the selftest.
