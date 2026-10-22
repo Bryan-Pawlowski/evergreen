@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://github.com/hermes-agent-plugins/evergreen/schema/profile.schema.json",
+  "$id": "https://github.com/Bryan-Pawlowski/evergreen/schema/career.schema.json",
   "title": "Evergreen career profile",
   "description": "Structured source of truth for one person's career data. Markdown notes under notes/ carry prose nuance; this file carries the facts a CV is rendered from.",
   "type": "object",
