@@ -164,6 +164,11 @@ These forks were decided and are no longer open:
 - ☐ **Clean-*profile* test with no local state at all.** The test above
   used a cloned profile (so it had a model and auth). A profile with
   genuinely no state — no skills, no prior sessions — is still untested.
+- ☐ **The `egtest` profile is kept** as a reusable harness for the next
+  round of plugin testing. It has the plugin installed from the git URL
+  and its model pointed at `ollama-cloud`; recreate it with
+  `hermes profile create egtest --clone --no-alias` if it is ever lost.
+  Delete it with `hermes profile delete egtest -y`.
 - ☐ **Plugin catalog submission**: a PR to
   `NousResearch/hermes-agent` adding `plugin-catalog/evergreen.yaml` with
   the reviewed commit SHA. Until then, install is by git URL only.
