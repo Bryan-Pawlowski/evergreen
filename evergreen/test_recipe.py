@@ -21,6 +21,8 @@ Run with the Hermes python (the one that has ruamel.yaml):
 
 from __future__ import annotations
 
+import copy
+import hashlib
 import shutil
 import sys
 import tempfile
@@ -360,6 +362,161 @@ def test_generation(c: _Checker) -> None:
             c.check("generate: it refuses to overwrite a non-empty directory", True)
 
 
+def _render_fingerprint(pdf: Path, dpi: int = 72) -> str:
+    """A fingerprint of what the page actually looks like.
+
+    A text-geometry probe cannot see a change that only affects an
+    image overlay -- ``minimal``'s band is a PNG -- so it would report
+    a false "no change" for a knob that plainly moved something. The
+    pixel fingerprint sees every visible change, and is *identical*
+    when nothing changed, which is what makes it able to prove a knob
+    is dead.
+    """
+    try:
+        import pymupdf
+    except Exception:
+        return ""
+    digest = hashlib.sha256()
+    doc = pymupdf.open(str(pdf))
+    try:
+        for page in doc:
+            digest.update(page.get_pixmap(dpi=dpi).samples)
+    finally:
+        # Closed explicitly: on Windows an open file cannot be deleted, and
+        # the temp tree is cleaned up on the way out.
+        doc.close()
+    return digest.hexdigest()[:16]
+
+
+def _compile_to_pdf(template, tmp: Path, tag: str, profile=None):
+    """Render a template with a profile and compile it."""
+    if profile is None:
+        profile = CareerProfile(SAMPLE)
+    tex = render_tex(template, profile)
+    build_dir = tmp / tag
+    main = stage(template, build_dir)
+    main.write_text(tex, encoding="utf-8", newline="\n")
+    fontconfig = None
+    if template.fontconfig and (build_dir / template.fontconfig).exists():
+        fontconfig = str((build_dir / template.fontconfig).resolve())
+    result = build_tex(main, build_dir, engine=template.engine,
+                       fontconfig=fontconfig)
+    return result
+
+
+def test_every_knob_is_live(c: _Checker) -> None:
+    """Each setting must change the rendered page on its own.
+
+    A setting that is accepted and then changes nothing is a control
+    that visibly does nothing -- the worst outcome for a form, because
+    the user has no way to tell it apart from a setting that worked.
+
+    The check is **per knob**, not on the settings as a whole. Changing
+    every setting at once would let a dead knob hide behind a live one:
+    the rendered page differs, so the aggregate check passes, and the
+    dead knob ships. Only a per-knob comparison can tell the two
+    apart.
+
+    It is also run against **two profiles**. A knob can be dead for the
+    sample profile and live for real content -- ``emergencystretch`` is
+    the example: it only matters when a line would otherwise overflow,
+    and the sample has no such line. A knob must change the page for
+    *some* profile, not for every profile.
+    """
+    print("\n-- every knob is live --")
+    if not find_tectonic():
+        print("[SKIP] compile — tectonic not installed")
+        return
+    try:
+        import pymupdf  # noqa: F401
+    except ImportError:
+        print("[SKIP] per-knob liveness — pymupdf is not installed")
+        return
+
+    for directory in _recipes_in_shipped_templates():
+        recipe = load_recipe(directory)
+        base = load_template(directory)
+        for label, profile in _liveness_profiles():
+            with tempfile.TemporaryDirectory() as tmpdir:
+                tmp = Path(tmpdir)
+                base_result = _compile_to_pdf(base, tmp, "base", profile)
+                if not base_result.ok:
+                    c.check(f"recipe[{recipe.id}]: the base compiles", False,
+                            "; ".join(base_result.errors)[:200])
+                    continue
+                base_fp = _render_fingerprint(base_result.pdf)
+
+                for knob in recipe.knobs:
+                    # A different value for this knob, and only this knob.
+                    value = _a_different_value(knob)
+                    if value is None:
+                        print(f"  [SKIP] {recipe.id}/{knob.id} — no second value")
+                        continue
+                    dest = tmp / f"gen_{knob.id}"
+                    try:
+                        generate_template(directory, dest, {knob.id: value},
+                                          template_id=f"{recipe.id}-{knob.id}")
+                    except Exception as exc:
+                        c.check(f"recipe[{recipe.id}]: setting {knob.id!r} generates",
+                                False, str(exc)[:200])
+                        continue
+                    result = _compile_to_pdf(load_template(dest), tmp,
+                                             f"build_{knob.id}", profile)
+                    if not result.ok:
+                        c.check(f"recipe[{recipe.id}]: setting {knob.id!r} compiles",
+                                False, "; ".join(result.errors)[:200])
+                        continue
+                    gen_fp = _render_fingerprint(result.pdf)
+                    c.check(
+                        f"recipe[{recipe.id}]: setting {knob.id!r} changes the page"
+                        f" [{label}]",
+                        gen_fp != base_fp,
+                        f"the rendered PDF is byte-identical with {knob.id}="
+                        f"{value!r}; the setting does nothing",
+                    )
+
+
+def _liveness_profiles():
+    """The profiles a knob must change the page for.
+
+    The sample, plus a stress profile with an unbreakable long word. A
+    setting like ``emergencystretch`` only matters when a line would
+    otherwise overflow, and the sample has no such line -- so a knob
+    that is live only under stress reads as dead against the sample
+    alone.
+    """
+    yield "sample", CareerProfile(SAMPLE)
+
+    stress = copy.deepcopy(SAMPLE)
+    stress["person"]["summary"] = (
+        "Supercalifragilisticexpialidociousness "
+        "Pneumonoultramicroscopicsilicovolcanoconiosis "
+        "Antidisestablishmentarianism "
+    )
+    yield "stress", CareerProfile(stress)
+
+
+def _a_different_value(knob) -> str | None:
+    """A second value for a knob, or None if there is no obvious one."""
+    if knob.type == "enum" and knob.options:
+        for option in knob.options:
+            if option != knob.default:
+                return option
+        return None
+    if knob.type == "number":
+        try:
+            return str(float(knob.default) + 0.1)
+        except (TypeError, ValueError):
+            return None
+    if knob.type == "length":
+        return {"0.75in": "1in", "2pt": "6pt", "1in": "1.5in"}.get(
+            str(knob.default), None)
+    if knob.type == "color":
+        return {"8F0D0D": "2E6B8A", "1E2531": "2E6B8A"}.get(
+            str(knob.default).lstrip("#").upper(), None)
+    return None
+
+
 def test_shipped_templates_are_unaffected(c: _Checker) -> None:
     """Having a recipe does not change how a template renders."""
     print("\n-- shipped templates --")
@@ -403,6 +560,7 @@ def main() -> int:
     test_applying_settings(c)
     test_errors_are_loud(c)
     test_generation(c)
+    test_every_knob_is_live(c)
     test_shipped_templates_are_unaffected(c)
 
     print()
