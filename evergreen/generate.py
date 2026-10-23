@@ -21,6 +21,7 @@ self-contained to be portable to another machine.
 
 from __future__ import annotations
 
+import re
 import shutil
 from pathlib import Path
 from typing import Any
@@ -30,6 +31,15 @@ from .recipe import RecipeError, apply_settings, load_recipe
 from .render import Template, TemplateError, load_template
 
 SETTINGS_FILENAME = "settings.yaml"
+
+# The id a generated template is addressed by. It becomes a directory name
+# under ``templates.local/``, so it is validated here rather than trusted
+# from the caller: ``hermes career generate --id ../../elsewhere`` — or an
+# HTTP request with the same id — must not write outside the workspace.
+# Same shape as a recipe's knob ids, which is what a template id already
+# looks like in this plugin.
+_TEMPLATE_ID_RE = re.compile(r"^[a-z0-9][a-z0-9._-]{0,63}$")
+
 
 # The manifest fields a generated template inherits from its base. The
 # rest (id, name, description) are the generated template's own.
@@ -50,6 +60,24 @@ class GenerateError(Exception):
     """Raised when a template cannot be generated."""
 
 
+def validate_template_id(value: str) -> str:
+    """Return the id, or raise if it is not usable as a template id.
+
+    A template id is also a directory name, so this is the one place that
+    decides what a caller may create. Lowercase letters, digits, dot, dash
+    and underscore, starting with a letter or digit: no separator at the
+    front, so an id can never climb out of ``templates.local/``.
+    """
+    text = str(value or "").strip()
+    if not _TEMPLATE_ID_RE.match(text):
+        raise GenerateError(
+            f"{value!r} is not a usable template id. Use lowercase letters, "
+            f"digits, dot, dash or underscore, starting with a letter or "
+            f"digit (at most 64 characters)."
+        )
+    return text
+
+
 def generate_template(
     base_dir: Path,
     dest_dir: Path,
@@ -67,6 +95,11 @@ def generate_template(
     """
     base_dir = Path(base_dir)
     dest_dir = Path(dest_dir)
+
+    # Before anything is read or created: an unusable id would become an
+    # unusable directory name, and refusing here means no caller (CLI, tool,
+    # HTTP) can write outside ``templates.local/``.
+    template_id = validate_template_id(template_id)
 
     try:
         base = load_template(base_dir)
@@ -145,4 +178,4 @@ def _copy_build_inputs(base: Template, dest_dir: Path) -> None:
             shutil.copy2(src, dest_dir / base.fontconfig)
 
 
-__all__ = ["GenerateError", "generate_template"]
+__all__ = ["GenerateError", "generate_template", "validate_template_id"]

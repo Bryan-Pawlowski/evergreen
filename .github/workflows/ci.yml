@@ -35,11 +35,13 @@ jobs:
 
       # pymupdf is not optional here: the liveness check compares the
       # rendered *pixels* of two pages, and without it the check skips
-      # rather than runs. A skipped gate is not a gate.
+      # rather than runs. A skipped gate is not a gate. fastapi and httpx are
+      # here for the same reason: the Configurator's HTTP door is a FastAPI
+      # router, and its test mounts and calls it for real.
       - name: Install the plugin's Python dependencies
         run: |
           python -m pip install --upgrade pip
-          python -m pip install ruamel.yaml jsonschema pymupdf
+          python -m pip install ruamel.yaml jsonschema pymupdf fastapi httpx
 
       - name: Self-test (compiles every shipped template)
         run: python -m evergreen.selftest
@@ -60,6 +62,14 @@ jobs:
         # nothing; a false alarm makes the generator's warnings noise,
         # and a person stops reading them.
         run: python -m evergreen.test_propose
+
+      - name: Dashboard API self-test (the Configurator's HTTP door)
+        # The door is the whole feature over HTTP: every base template and its
+        # knobs, the workspaces on the machine, generation, and a real tectonic
+        # build. The test loads plugin_api.py the way Hermes loads it and calls
+        # every route against a throwaway workspace, checking the filesystem
+        # rather than the handler's own answer.
+        run: python -m evergreen.test_dashboard_api
 
       # `hermes plugins validate` is the authoritative gate, but it needs a
       # Hermes new enough to have it, and the PyPI release lags the git
@@ -223,6 +233,27 @@ jobs:
           cp /tmp/plugin.yaml.bak plugin.yaml
           python scripts/check_manifest.py
           echo "OK: the manifest check caught the broken manifest"
+
+      - name: The manifest check must reject a dashboard id that drifts
+        run: |
+          cp dashboard/manifest.json /tmp/dashboard-manifest.bak
+          python - <<'PROBE'
+          import json, pathlib
+          path = pathlib.Path("dashboard/manifest.json")
+          data = json.loads(path.read_text(encoding="utf-8"))
+          data["name"] = "evergreen-typo"
+          with path.open("w", encoding="utf-8") as handle:
+              json.dump(data, handle, indent=2)
+              handle.write(chr(10))
+          PROBE
+          if python scripts/check_manifest.py; then
+            echo "FAIL: the manifest check passed a dashboard id that does not match plugin.yaml"
+            cp /tmp/dashboard-manifest.bak dashboard/manifest.json
+            exit 1
+          fi
+          cp /tmp/dashboard-manifest.bak dashboard/manifest.json
+          python scripts/check_manifest.py
+          echo "OK: the manifest check caught the drifted dashboard id"
 
       # The line-ending check needs git (for ls-files) but not tectonic.
       - name: The line-ending check must reject a planted CRLF file
