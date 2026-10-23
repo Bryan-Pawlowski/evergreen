@@ -5,8 +5,8 @@ set of structured settings into a **new LaTeX template directory** in a career
 workspace's `templates.local/`.
 
 Status: **done**. M1–M5 shipped on `feature/template-configurator`, merged to
-`main` and `stable`. The catalog listing is the one step that lives outside this
-repository.
+`main` and released on `stable`. Distribution is the git URL; the plugin catalog
+is deliberately not pursued (§5).
 PR: <https://github.com/Bryan-Pawlowski/evergreen/pull/1>.
 
 ---
@@ -975,8 +975,8 @@ therefore configurable again, and generation composes (§3.4, §5).
 
 *Goal: the feature ships.*
 
-**Status: done**, with the catalog listing as the one step that lands outside
-this repository.
+**Status: done.** Distribution is `stable` plus the git URL, and that is the
+whole channel — see the decision in §5 on why a catalog listing is not pursued.
 
 **The last open question, settled.** A generated template now carries the base's
 `recipe.yaml`, rewritten onto its own `cv.tex` (§3.4). The cost was the reason it
@@ -1011,16 +1011,18 @@ knob's rewrite swallowed is a loud error instead of a control that does nothing.
 - **Merge to `main`, then `stable`**, each with the GitHub run green on the
   merged commit. `stable` is the distribution branch `hermes plugins install`
   follows, so it must contain exactly what `main` contains.
-- **Catalog PR to `NousResearch/hermes-agent`** adding
-  `plugin-catalog/evergreen.yaml`, pinned to the merged `stable` SHA. Their
-  admission rules (§2, §6, §14 of their catalog README) are what the entry has
-  to satisfy: a full 40-character SHA, `capabilities` matching what the plugin
-  registers, `requires_hermes` truthful and not newer than the current release,
-  and an owner-authored submission.
+- **Distribution is the git URL, and the plugin catalog is deliberately not
+  pursued** (the owner's call, 2026-10-23). `hermes plugins install
+  https://github.com/Bryan-Pawlowski/evergreen` is the channel, and a stranger
+  who wants it can read the repo first. The catalog's cost is not the one file:
+  it is a maintainer-reviewed pin that has to be re-reviewed on every SHA bump,
+  a `capabilities` block that can drift into a validation failure, and a fork of
+  `NousResearch/hermes-agent` under a personal account. Revisit only if
+  discovery by name becomes worth that. See §5.
 
-*Done when:* `main` and `stable` are merged and green, the catalog entry is pinned
-to the `stable` commit, and every claim above is read back from GitHub rather
-than from a local run.
+*Done when:* `main` and `stable` are merged and green and every claim above is
+read back from GitHub rather than from a local run. A catalog entry is not part
+of the definition of done.
 
 ---
 
@@ -1093,6 +1095,22 @@ piece of a larger line. The cost of the shipped design is that a value
 appears in two places — the template's line and the recipe's pattern — so the
 exactly-one-match rule is what keeps them in step, and a drifted recipe is
 an error rather than a silent mis-render.
+
+**Distribution is the git URL, not the catalog.** A plugin installs with
+`hermes plugins install https://github.com/Bryan-Pawlowski/evergreen`, and that
+is the whole channel: the repo is public, the branch is `stable`, and someone
+who wants the plugin can read every line before they install it. There is no
+`plugin-catalog/evergreen.yaml` and no PR to `NousResearch/hermes-agent`.
+*Rejected:* the catalog listing the plan originally called for. Its real cost is
+not the one YAML file — it is a maintainer-reviewed pin that must be re-reviewed
+on **every** SHA bump, a `capabilities` block that a later change can drift into
+a validation failure, and a fork of `NousResearch/hermes-agent` under a personal
+account. That is a standing obligation for a plugin whose audience arrives with
+a URL in hand. What would reopen it: a request for the plugin by name, or
+discovery becoming worth more than the pin maintenance. The entry itself is easy
+to produce whenever that happens — `hermes plugins validate` already passes with
+`security scan: safe`, `desktop surface` and `no core override`, which are the
+three checks the catalog adds.
 
 **The still-open question: disk cost.** Each generated template copies the
 base's vendored fonts and class file, because the template contract has no

@@ -5,9 +5,9 @@ what is left before it is genuinely shippable.
 
 The **Template Configurator** (the recipe seam, the generator, the HTTP door, the
 desktop pane, and the distribution) is tracked in
-[`CONFIGURATOR-PLAN.md`](CONFIGURATOR-PLAN.md) — M1–M5, done and merged to
-`main`/`stable`. This file does not repeat it; only the catalog listing is still
-open, and it is the same item here as it is there.
+[`CONFIGURATOR-PLAN.md`](CONFIGURATOR-PLAN.md) — M1–M5, done, merged to `main`
+and releasing on `stable`. This file does not repeat it. Distribution is the git
+URL; there is no catalog PR (see the settled-decisions row below).
 
 Legend: ☐ not started · ◐ in progress · ☑ done & verified
 
@@ -27,6 +27,7 @@ These forks were decided and are no longer open:
 | Publication shape | **A public repo** (`Bryan-Pawlowski/evergreen`). The plugin dir ships zero personal data; the Evergreen *workspace* stays on this machine and is never committed. |
 | How a workspace is addressed | **By name.** The name becomes a directory directly under the Hermes home (one level deeper than the home itself), and it is recorded *in the career profile*, so it travels with the data if the workspace is moved or copied. No separate registry file. |
 | Where the name's registry lives | **In the career profile itself** (the `name` field), with `career_list` scanning the Hermes home for workspaces. A separate index would drift from the data it indexes. |
+| How the plugin is distributed | **By git URL. No plugin-catalog PR** (decided 2026-10-23). `hermes plugins install https://github.com/Bryan-Pawlowski/evergreen` from the `stable` branch is the channel. A catalog entry costs a re-reviewed pin on every SHA bump, a `capabilities` block that can drift into a validation failure, and a fork of `hermes-agent` under a personal account — a standing obligation for a plugin whose audience arrives with a URL. Revisit if someone asks for it by name. See `CONFIGURATOR-PLAN.md` §5. |
 
 ---
 
@@ -65,11 +66,9 @@ These forks were decided and are no longer open:
   run has now happened against the desktop half too (M4 of
   `CONFIGURATOR-PLAN.md`: `✓ desktop surface — stays inside the plugin SDK
   surface`), so this is no longer an open item.
-- ◐ **Submit to the plugin catalog** — a PR to
-  `NousResearch/hermes-agent` adding `plugin-catalog/evergreen.yaml` with
-  the reviewed commit SHA. Until it merges, install is by git URL only. The
-  entry is pinned to the `stable` commit, because that is the branch
-  `hermes plugins install` follows.
+- ☑ **Submit to the plugin catalog** — *decided against (2026-10-23).* Install
+  is by git URL and that is the channel; see the settled-decisions row above and
+  `CONFIGURATOR-PLAN.md` §5. Nothing to do here unless the decision is reopened.
 
 ## 2. Fix a wrong claim in the existing Evergreen skill
 
@@ -198,12 +197,13 @@ These forks were decided and are no longer open:
   and its model pointed at `ollama-cloud`; recreate it with
   `hermes profile create egtest --clone --no-alias` if it is ever lost.
   Delete it with `hermes profile delete egtest -y`.
-- ◐ **Plugin catalog submission**: a PR to
-  `NousResearch/hermes-agent` adding `plugin-catalog/evergreen.yaml` with
-  the reviewed commit SHA. Until it merges, install is by git URL only.
-  Pinned to the `stable` commit; the entry's `capabilities` must match what the
-  plugin registers and its `requires_hermes` must stay truthful (their catalog
-  README's admission rules are the checklist).
+- ☑ **Plugin catalog submission** — *decided against (2026-10-23).* Install is by
+  git URL from the `stable` branch, and the repo README is the shop window. The
+  settled-decisions row above records why; `CONFIGURATOR-PLAN.md` §5 records the
+  same decision from the feature's side. If it is ever reopened, the entry is a
+  single `plugin-catalog/evergreen.yaml` and `hermes plugins validate` already
+  passes the three checks the catalog adds (`security scan`, `desktop surface`,
+  `no core override`).
 - ☐ **A worked example**: a small `examples/` directory with a scrubbed
   career profile and the PDF it produces, so a stranger can see the output
   without setting anything up. This is the "scrubbed example workspace"
