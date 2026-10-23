@@ -4,8 +4,8 @@ An interactive HTML Configurator, usable in the Hermes desktop app, that turns a
 set of structured settings into a **new LaTeX template directory** in a career
 workspace's `templates.local/`.
 
-Status: in progress on `feature/template-configurator`. **M1 and M2 are done**;
-M3 (the backend door), M4 (the desktop pane) and M5 (distribution) are not.
+Status: in progress on `feature/template-configurator`. **M1, M2 and M3 are
+done**; M4 (the desktop pane) and M5 (distribution) are not.
 Draft PR: <https://github.com/Bryan-Pawlowski/evergreen/pull/1>.
 
 ---
@@ -686,11 +686,11 @@ seam; the workspace holds the taste.
 - **The workspace recipe** — `templates.local/evergreen/recipe.yaml`
   in the active workspace, with three settings, each proved live.
 
-*What is not done, and is M3+:* the desktop pane, the backend door, and
-the distribution. The desktop-surface lint (`scripts/`, mirroring the
-subset of `plugin_validate_desktop.py` that CI can run without a new
-Hermes) is still outstanding, and it belongs with M4, where
-`desktop/plugin.js` first exists to be linted.
+*What is not done, and is M3+:* the desktop pane and the distribution. (The
+backend door shipped in M3.) The desktop-surface lint (`scripts/`, mirroring the
+subset of `plugin_validate_desktop.py` that CI can run without a new Hermes) is
+still outstanding, and it belongs with M4, where `desktop/plugin.js` first
+exists to be linted.
 
 *Done when:* all four bases generate, compile, pass parity, and the CLI
 produces a template the existing `career_build` renders. Every knob of
@@ -714,27 +714,130 @@ sets, the dialect's copy wins and the knob is a no-op.
 
 *Goal: the whole feature is reachable over HTTP, with no UI.*
 
-- `dashboard/manifest.json` and `dashboard/plugin_api.py`:
-  - `GET /templates` — every base template, its recipe, and its knobs
-  - `GET /workspaces` — the workspaces on this machine
-  - `POST /generate` — settings → writes `templates.local/<id>/`; returns the
-    written paths and the resolved LaTeX
-  - `POST /build` — a generated template → real tectonic build → PDF path,
-    page count, overfull-box count
+**Status: done.** What shipped:
+
+- `dashboard/manifest.json` — `name: evergreen` (the mount prefix *and* the
+  desktop id, so the two cannot drift), `api: plugin_api.py`, `entry:
+  dist/index.js`, and a **hidden** tab (`tab.hidden`), because the Configurator
+  is a desktop pane, not a page in the web dashboard.
+- `dashboard/plugin_api.py` — the four routes. Every handler is a thin wrapper
+  over the plugin's own Python (`career_build`, `generate_template`,
+  `load_recipe`, `discover_templates`), so the door and `hermes career ...`
+  cannot drift. Handlers are plain `def`, not `async def`: FastAPI runs them in
+  its threadpool, so a tectonic build cannot block the event loop the rest of
+  the dashboard is served from.
+  - `GET /templates?workspace=` — every template, its recipe, its knobs, and
+    `generate_from` (a template is a base only if its recipe loads *and* its id
+    matches the template's). A template that carries a broken recipe is
+    reported in `recipe_error`, not dropped.
+  - `GET /workspaces` — the named workspaces under the Hermes home plus the
+    configured `workspace_path`, each with its own `templates.local` ids.
+  - `POST /generate` — body `{base, id, name?, description?, workspace?,
+    settings}`; writes `templates.local/<id>/`, **reads the result back off
+    disk**, and returns the paths plus the resolved LaTeX per knob (with
+    `changed` marking the caller's own choices).
+  - `POST /build` — `{template, workspace?, target?}`; 503 when tectonic is
+    absent (with the install hint), 422 when the template does not compile,
+    and otherwise the PDF path, page count and overfull-box count.
 - The no-op `dashboard/dist/index.js`, so the browser dashboard does not log a
-  load failure for a manifest that has no SPA tab.
+  load failure for a manifest with no SPA tab. It is a **classic script**, not
+  an ES module (the SPA appends a `<script>`), and it registers a component
+  that renders `null` — otherwise the loader reports `NO_REGISTER` for a plugin
+  that loads but registers nothing. `.gitignore`'s `dist/` rule would have kept
+  this file out of the repo; the fix is a `!/dashboard/dist/` directory
+  negation (git cannot re-include a file under an excluded directory).
 - `plugin_api.py` puts the plugin root on `sys.path` and imports from there
   (§1).
+- `evergreen/test_dashboard_api.py` — 66 checks, run by CI. It loads
+  `plugin_api.py` **the way Hermes loads it** (standalone module,
+  `spec_from_file_location`, no package context) and mounts it at the prefix
+  taken from the manifest, so a drifted manifest name fails the test instead of
+  404ing in the app. A separate interpreter, started from an unrelated working
+  directory with no `PYTHONPATH`, proves the `sys.path` bootstrap. Every route
+  is then called over HTTP against a throwaway Hermes home, and each answer is
+  checked **against the filesystem**, never against the handler's own return
+  value.
+- `scripts/check_manifest.py` now checks the dashboard half too: the manifest's
+  `name` must equal `plugin.yaml`'s (gate 3 of §1), `api` and `entry` must be
+  relative paths that exist inside `dashboard/`, and the versions must match.
+  Verified to fail on a drifted name and on a missing entry file.
+- `evergreen/generate.py` — **a template id is now validated** (`validate_template_id`).
+  See the finding below.
+
+**The finding: the door needed a check the CLI did not have.** A template id
+becomes a directory name under `templates.local/`, and nothing validated it:
+`hermes career generate --id ../../elsewhere` — and, once the route existed,
+an HTTP request with the same id — would have written outside the workspace.
+The fix is one function in `generate.py`, deliberately *there* rather than in
+the route, because all three callers (CLI, tool, HTTP) go through
+`generate_template`. The route maps the refusal to a 400.
+
+**Measured, against a live `hermes serve`** (isolated, loopback, temp
+`HERMES_HOME` holding a copy of this branch as the plugin, the real workspace
+passed by path):
+
+```
+GET  /workspaces                       200  {workspaces: [evergreen], default: evergreen}
+GET  /templates?workspace=<path>       200  bases: [evergreen]; the three knobs,
+                                             basecolor/leftcolumn/rightcolumnlength
+POST /generate  {basecolor: #1F6FEB,
+                 rightcolumnlength: 13.8cm}
+                                       200  templates.local/m3live/ on disk;
+                                             cv.tex carries 1F6FEB and 13.8cm;
+                                             settings.yaml says base: evergreen
+POST /build                            200  2 pages, 0 overfull boxes,
+                                             out/cv-m3live.pdf
+```
+
+The built PDF's text layer was read back with the render-parity script's own
+extractor (`_read_text_layer`): 5686 characters, the profile's headline and
+contact block present. The refusals were exercised live too and each one is
+specific: an unknown setting 400 (naming what the template offers), a duplicate
+id 409, `--id ../escape` 400, a base with no recipe 400 (naming
+`hermes career author`), an unknown template 404, an unknown workspace 404, and
+no session token 401.
+
+**Two facts about the mount, verified rather than assumed.** On a loopback bind
+the dashboard gate is off, but `/api/*` still requires the SPA's session token
+(`X-Hermes-Session-Token`, or the value injected into the page as
+`__HERMES_SESSION_TOKEN__`) — so "loopback means unauthenticated" is wrong, and
+a caller that is not the SPA has to present that token. And the plugin routes
+are mounted at `/api/plugins/<manifest name>/`, i.e. the manifest's `name` *is*
+the desktop id; there is no separate place to set it.
 
 *Done when:* the endpoints are exercised against a live `hermes serve`, the
 generated directory is read back from disk, and the built PDF is checked by the
-existing parity script. **Not** by the pane — the pane is M4.
+existing parity script. **Not** by the pane — the pane is M4. **Met**, above.
+
+**What M3 changed about the plan:**
+
+- **A workspace outside the Hermes home is addressed by path.** `GET
+  /workspaces` can only name the workspaces directly under the Hermes home (and
+  the configured `workspace_path`); this machine's real workspace lives at a
+  path of its own, so the door accepts a path as well as a name. There is no
+  registry to consult — by design (§5) — so **M4's pane needs a way to enter or
+  pick a path**, or the operator sets `plugins.entries.evergreen.settings.
+  workspace_path`.
+- **The door refuses to guess a workspace from its working directory.** The
+  agent half's `find_workspace()` walks up from the cwd; for a server that is
+  meaningless (and dangerous — it is whatever directory the gateway started
+  in), so a request either names its workspace or there is exactly one.
+- **A generated template does not carry the recipe that made it.** §3.4 lists
+  `settings.yaml` and not `recipe.yaml`, so re-opening `m3live` in the
+  Configurator would offer **no knobs** — the settings are recorded, the lines
+  they rewrote are not. *Open question for M4/M5:* copy the base's recipe into
+  the generated directory with its `id` rewritten to the new template (making a
+  generated template itself configurable), or leave generation as a one-shot
+  and treat the base as the only thing that is ever configured. Not decided
+  here, because it changes M2's artifact.
 
 *Risks:* the API mount is behind `plugins.enabled` (already satisfied) and
 behind a hot-mount fallback on first request, so a restart may be needed after
 the first deploy. The `hermes serve` process is separate from the CLI's
 environment: `tectonic` is found via `shutil.which` plus a `~/.local/bin`
-fallback, which the served process must be able to reach.
+fallback, which the served process must be able to reach — **verified**: the
+served process found `~/.local/bin/tectonic.EXE` and built in 1.5 s.
+
 
 ### M4 — The desktop pane
 
