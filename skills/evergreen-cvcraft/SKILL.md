@@ -194,6 +194,22 @@ The build copies the template into a scratch directory before compiling, so
 a template directory is never written to and never accumulates build
 artifacts.
 
+### The recipe, if your template has one
+
+`plain/` now ships a `recipe.yaml`: the settings the template exposes, each
+naming the exact line of `cv.tex` it rewrites. **If you copy `plain/` and
+edit its `cv.tex`, that recipe comes with the copy and may no longer
+match.** A pattern that matches zero times (you changed the line) or more
+than once is an error, and the generator refuses to guess.
+
+So after copying `plain/`, either delete `recipe.yaml` — the template is
+complete without one, it just has no adjustable settings — or update the
+patterns to match your new `cv.tex`. A recipe's `latex` field is a
+*pattern*, not a literal: `<<value>>` is where the value goes, and the rest
+of the pattern must appear in `cv.tex` exactly as written.
+
+Full contract: `templates/README.md`.
+
 ## Developing against a running gateway
 
 A Hermes gateway is a single multiplexed process that serves every profile.
