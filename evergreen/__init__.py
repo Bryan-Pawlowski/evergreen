@@ -20,6 +20,7 @@ import shutil
 import tempfile
 from pathlib import Path
 
+from . import dialects
 from . import matcher as matcher_mod
 from . import workspace as ws_mod
 from .build import build_tex, find_tectonic
@@ -29,8 +30,11 @@ from .career import (CareerProfile, CareerProfileError, Workspace,
                       list_workspaces, validate, validate_workspace_name,
                       workspace_path_for_name)
 from .generate import GenerateError, generate_template  # noqa: F401  (re-exported)
+from .liveness import check_knobs, keep_live  # noqa: F401  (re-exported)
+from .propose import (inline_spacing_overrides, propose,  # noqa: F401  (re-exported)
+                      propose_recipe)
 from .recipe import (Recipe, RecipeError, apply_settings,  # noqa: F401  (re-exported)
-                     load_recipe)
+                     load_recipe, write_recipe)
 from .render import (TemplateError, discover_templates, render_tex, slots_in, stage)
 from .render import load_template  # noqa: F401  (re-exported)
 
@@ -566,6 +570,277 @@ def career_templates(params: dict, ctx=None, **kw) -> str:
     }, indent=2)
 
 
+def _recipe_skeleton(template, proposals) -> dict:
+    """The recipe a set of proposals would become.
+
+    Only the CLEAN proposals become knobs. A flagged candidate is
+    reported, not written: a knob that the generator knows is a trap
+    would be a knob that does nothing.
+    """
+    return {
+        "id": template.id,
+        "knobs": [p.as_knob() for p in proposals if p.is_clean],
+    }
+
+
+def career_configure(params: dict, ctx=None, **kw) -> str:
+    """Propose a recipe for a template, and generate a configured copy.
+
+    Two modes:
+
+    * ``action: "propose"`` (the default) — read a template, propose
+      the settings it could expose, and flag the ones that need a human
+      decision. It writes nothing. The proposals are a starting point
+      for a ``recipe.yaml``, which the caller then edits.
+
+    * ``action: "generate"`` — take a base template, apply settings,
+      and write a new template directory. The base must already have a
+      ``recipe.yaml``; the settings are checked against it.
+
+    The generated template lands in the workspace's ``templates.local/``,
+    so nothing it contains reaches the plugin's shipped templates.
+    """
+    action = (params.get("action") or "propose").lower()
+    template_id = params.get("template")
+    new_id = params.get("id")
+    template_name = params.get("template_name")
+    description = params.get("description")
+    settings = params.get("settings") or {}
+    workspace = params.get("workspace")
+    workspace_name = params.get("name")
+    path = params.get("path")
+    overwrite = bool(params.get("overwrite"))
+
+    resolved = _resolve_workspace(ctx, workspace, workspace_name)
+    templates = discover_templates(*_shipped_template_roots(resolved))
+    if not templates:
+        return json.dumps({
+            "ok": False,
+            "error": f"No templates found under {SHIPPED_TEMPLATES}.",
+        }, indent=2)
+
+    template = None
+    for t in templates:
+        if t.id == template_id:
+            template = t
+            break
+    if template is None:
+        if template_id:
+            return json.dumps({
+                "ok": False,
+                "error": f"No template {template_id!r}. Available: "
+                         f"{', '.join(t.id for t in templates)}.",
+            }, indent=2)
+        template = templates[0]
+
+    if action == "propose":
+        return _configure_propose(template, resolved)
+    if action == "author":
+        return _configure_author(template, resolved, path, overwrite)
+    if action == "generate":
+        return _configure_generate(template, resolved, new_id, settings,
+                                   template_name, description)
+    return json.dumps({
+        "ok": False,
+        "error": f"Unknown action {action!r}. Use 'propose', 'author' "
+                 f"or 'generate'.",
+    }, indent=2)
+
+
+def _configure_author(template, workspace, path, overwrite: bool) -> str:
+    """Propose, prove, and write the recipe.
+
+    The order matters. The generator *proposes*; the liveness check
+    *disposes*. So the recipe that gets written contains only the
+    settings a render proved change the page -- a setting that does
+    nothing is not offered as a setting.
+
+    The recipe goes where the person says -- normally a template in
+    the workspace's ``templates.local/``. The shipped templates are
+    left alone: a concrete recipe belongs to whoever owns the
+    template, not to the plugin.
+    """
+    if not path:
+        return json.dumps({
+            "ok": False,
+            "error": "Give me the directory to write the recipe into "
+                     "(the 'path' parameter).",
+        }, indent=2)
+    directory = Path(path)
+    if not directory.is_dir():
+        return json.dumps({
+            "ok": False,
+            "error": f"{directory} is not a directory.",
+        }, indent=2)
+
+    class_source = ""
+    for class_file in sorted(directory.glob("*.cls")):
+        class_source = class_file.read_text(encoding="utf-8", errors="replace")
+        break
+    source_file = directory / "cv.tex"
+    if not source_file.exists():
+        return json.dumps({
+            "ok": False,
+            "error": f"{source_file} does not exist; a recipe points at the "
+                     f"lines of a template's cv.tex.",
+        }, indent=2)
+    source = source_file.read_text(encoding="utf-8")
+
+    recipe = propose_recipe(
+        source,
+        template.id,
+        dialect_source=dialects.dialect_source(template.dialect),
+        class_source=class_source,
+    )
+    if not recipe["knobs"]:
+        return json.dumps({
+            "ok": False,
+            "error": "Nothing safe to propose for this template.",
+            "template": template.id,
+        }, indent=2)
+
+    # Prove each proposed setting with a render, and keep only the ones
+    # that change the page.
+    report = None
+    try:
+        profile = workspace.load()
+    except CareerProfileError:
+        profile = None
+    if profile is not None:
+        try:
+            report = check_knobs(directory, recipe, profile)
+        except Exception as exc:
+            report = None
+            report_error = str(exc)
+        else:
+            report_error = ""
+    else:
+        report_error = "the workspace has no career profile to render with"
+
+    payload = {
+        "ok": True,
+        "template": template.id,
+        "proposed": [k["id"] for k in recipe["knobs"]],
+    }
+    if report is not None and not report.skipped:
+        recipe = keep_live(recipe, report)
+        payload["live"] = report.live_ids
+        payload["dead"] = report.dead_ids
+        payload["dead_reasons"] = {
+            k.knob_id: k.reason for k in report.knobs if not k.live
+        }
+        if not recipe["knobs"]:
+            return json.dumps({
+                "ok": False,
+                "error": "None of the proposed settings changes the page, so "
+                         "there is no recipe worth writing.",
+                "template": template.id,
+                "dead_reasons": payload["dead_reasons"],
+            }, indent=2)
+    else:
+        payload["proven"] = False
+        payload["why"] = (report.skipped if report is not None
+                          else report_error)
+        payload["note"] = ("The settings were not proved with a render, so "
+                            "the recipe holds every proposal. Check them "
+                            "before you trust them.")
+
+    try:
+        written = write_recipe(directory, recipe, overwrite=overwrite)
+    except RecipeError as exc:
+        return json.dumps({
+            "ok": False,
+            "error": str(exc),
+            "template": template.id,
+        }, indent=2)
+
+    payload["written"] = str(written)
+    payload["knobs"] = [k["id"] for k in recipe["knobs"]]
+    payload["next"] = "Edit the recipe, then re-run the check on anything "\
+                      "you add."
+    return json.dumps(payload, indent=2)
+
+
+def _configure_propose(template, workspace) -> str:
+    """Propose the settings a template could expose. Writes nothing."""
+    class_source = ""
+    for class_file in sorted(template.dir.glob("*.cls")):
+        class_source = class_file.read_text(encoding="utf-8", errors="replace")
+        break
+    proposals = propose(
+        template.source,
+        template.id,
+        dialect_source=dialects.dialect_source(template.dialect),
+        class_source=class_source,
+    )
+    overrides = inline_spacing_overrides(
+        template.source, dialects.dialect_source(template.dialect))
+
+    clean = [p for p in proposals if p.is_clean]
+    flagged = [p for p in proposals if not p.is_clean]
+
+    payload = {
+        "ok": True,
+        "template": template.id,
+        "proposed_recipe": _recipe_skeleton(template, proposals),
+        "proposals": [p.to_dict() for p in clean],
+        "flagged": [p.to_dict() for p in flagged],
+        "notes": [
+            "The generator PROPOSES; a render proves. A setting is only "
+            "real once changing it changes the page -- the per-knob "
+            "liveness check is what settles it.",
+            "The flagged candidates are traps: each one would be a "
+            "control that does nothing, or a LaTeX error.",
+        ],
+    }
+    if overrides:
+        payload["dialect_overrides"] = overrides
+    return json.dumps(payload, indent=2)
+
+
+def _configure_generate(template, workspace, new_id, settings,
+                        template_name, description) -> str:
+    """Apply settings to a base template and write the result."""
+    if not new_id:
+        return json.dumps({
+            "ok": False,
+            "error": "Give the generated template an id (the 'id' parameter).",
+        }, indent=2)
+    if not isinstance(settings, dict):
+        return json.dumps({
+            "ok": False,
+            "error": "The 'settings' parameter must be an object of "
+                     "setting id to value.",
+        }, indent=2)
+
+    dest = workspace.local_templates_dir / new_id
+    try:
+        generate_template(
+            template.dir,
+            dest,
+            settings,
+            template_id=new_id,
+            name=template_name or new_id,
+            description=description or "",
+        )
+    except GenerateError as exc:
+        return json.dumps({
+            "ok": False,
+            "error": str(exc),
+            "template": template.id,
+            "hint": "A template needs a recipe.yaml to be generated from. "
+                    "Propose one with action='propose'.",
+        }, indent=2)
+
+    return json.dumps({
+        "ok": True,
+        "template": template.id,
+        "generated": str(dest),
+        "settings": settings,
+        "next": f"Build it with career_build, using --template {new_id}.",
+    }, indent=2)
+
+
 TOOLS = [
     {
         "name": "career_init",
@@ -735,6 +1010,73 @@ TOOLS = [
         },
         "handler": career_templates,
     },
+    {
+        "name": "career_configure",
+        "description": (
+            "Configure a CV template. With action='propose' (the default), "
+            "read a template and propose the settings it could expose: the "
+            "knobs, the line each one rewrites, and the candidates that "
+            "are traps — a colour that is declared but never used, a "
+            "derived colour, a class option, a line the renderer "
+            "overrides. It writes nothing; the proposals are a starting "
+            "point for a recipe.yaml. With action='generate', apply "
+            "settings to a base template that has a recipe and write the "
+            "result into the workspace's templates.local/, where the "
+            "existing career_build renders it with no changes."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "action": {
+                    "type": "string",
+                    "enum": ["propose", "author", "generate"],
+                    "description": (
+                        "propose (default) reports the settings a template "
+                        "could expose; author writes that recipe into a "
+                        "template directory; generate applies settings to a "
+                        "base that has a recipe and writes the result."
+                    ),
+                },
+                "path": {
+                    "type": "string",
+                    "description": "The template directory to write the "
+                                   "recipe into (action='author').",
+                },
+                "overwrite": {
+                    "type": "boolean",
+                    "description": "Replace an existing recipe "
+                                   "(action='author').",
+                },
+                "template": {
+                    "type": "string",
+                    "description": "The base template id. Omit for the default.",
+                },
+                "id": {
+                    "type": "string",
+                    "description": "The id for the generated template "
+                                   "(action='generate').",
+                },
+                "template_name": {
+                    "type": "string",
+                    "description": "A display name for the generated template.",
+                },
+                "description": {
+                    "type": "string",
+                    "description": "A description for the generated template.",
+                },
+                "settings": {
+                    "type": "object",
+                    "description": "Setting id to value, for action='generate'.",
+                },
+                "workspace": {"type": "string"},
+                "name": {
+                    "type": "string",
+                    "description": "Workspace name.",
+                },
+            },
+        },
+        "handler": career_configure,
+    },
 ]
 
 
@@ -754,6 +1096,10 @@ def career_command(raw_args: str, ctx=None, **kw) -> str:
             "  /career templates     list the available CV templates\n"
             "  /career build [target] render a CV (add --template <id>)\n"
             "  /career match <file>  match a job description against the profile\n"
+            "  /career recipe [id]   propose the settings a template could expose\n"
+            "  /career author <id> --path <dir>\n"
+            "                        write that recipe into a template directory\n"
+            "  /career generate --base <id> --id <new-id> [--set k=v]\n"
         )
 
     parts = args.split()
@@ -789,6 +1135,58 @@ def career_command(raw_args: str, ctx=None, **kw) -> str:
             "job_description_path": str(path),
             "target": path.stem,
         }, ctx=ctx)
+    if verb == "recipe":
+        return career_configure({
+            "action": "propose",
+            "template": rest[0] if rest else None,
+        }, ctx=ctx)
+    if verb == "author":
+        params = {"action": "author"}
+        others = []
+        i = 0
+        while i < len(rest):
+            item = rest[i]
+            if item == "--path" and i + 1 < len(rest):
+                params["path"] = rest[i + 1]
+                i += 2
+                continue
+            if item == "--template" and i + 1 < len(rest):
+                params["template"] = rest[i + 1]
+                i += 2
+                continue
+            if item == "--overwrite":
+                params["overwrite"] = True
+                i += 1
+                continue
+            others.append(item)
+            i += 1
+        if others and "template" not in params:
+            params["template"] = others[0]
+        return career_configure(params, ctx=ctx)
+    if verb == "generate":
+        params: dict = {"action": "generate"}
+        settings: dict = {}
+        others = []
+        i = 0
+        while i < len(rest):
+            item = rest[i]
+            if item == "--base" and i + 1 < len(rest):
+                params["template"] = rest[i + 1]
+                i += 2
+                continue
+            if item == "--id" and i + 1 < len(rest):
+                params["id"] = rest[i + 1]
+                i += 2
+                continue
+            if item == "--set" and i + 1 < len(rest):
+                key, _, value = rest[i + 1].partition("=")
+                settings[key] = value
+                i += 2
+                continue
+            others.append(item)
+            i += 1
+        params["settings"] = settings
+        return career_configure(params, ctx=ctx)
 
     return f"Unknown command {verb!r}. Try /career with no arguments for the list."
 
@@ -872,9 +1270,43 @@ def career_cli(args) -> int:
         print(career_build({"template": getattr(args, "template", None),
                             "target": getattr(args, "target", None)}))
         return 0
+    if command == "recipe":
+        print(career_configure({
+            "action": "propose",
+            "template": getattr(args, "template", None),
+            "workspace": getattr(args, "workspace", None),
+        }))
+        return 0
+    if command == "author":
+        print(career_configure({
+            "action": "author",
+            "template": getattr(args, "template", None),
+            "path": getattr(args, "path", None),
+            "overwrite": bool(getattr(args, "overwrite", False)),
+            "workspace": getattr(args, "workspace", None),
+        }))
+        return 0
+    if command == "generate":
+        settings = {}
+        for item in getattr(args, "sets", None) or []:
+            key, _, value = item.partition("=")
+            if not _:
+                print(f"--set needs KEY=VALUE, got {item!r}")
+                return 1
+            settings[key] = value
+        print(career_configure({
+            "action": "generate",
+            "template": getattr(args, "base", None),
+            "id": getattr(args, "new_id", None),
+            "settings": settings,
+            "workspace": getattr(args, "workspace", None),
+        }))
+        return 0
 
     print("Usage: hermes career "
-          "{init <name> | list | status | templates | match <file> | build}")
+          "{init <name> | list | status | templates | match <file> | build "
+          "| recipe [template] | author <template> --path <dir> | generate "
+          "--base <id> --id <new-id>}")
     return 1
 
 
@@ -901,6 +1333,33 @@ def setup_cli(parser) -> None:
     p = sub.add_parser("build", help="Render and compile a CV.")
     p.add_argument("--template", default=None)
     p.add_argument("--target", default=None)
+
+    p = sub.add_parser(
+        "recipe",
+        help="Propose the settings a template could expose.",
+    )
+    p.add_argument("template", nargs="?", default=None)
+    p.add_argument("--workspace", default=None)
+
+    p = sub.add_parser(
+        "author",
+        help="Write the proposed recipe into a template directory.",
+    )
+    p.add_argument("template", nargs="?", default=None)
+    p.add_argument("--path", dest="path", default=None,
+                   help="The template directory to write recipe.yaml into.")
+    p.add_argument("--overwrite", action="store_true")
+    p.add_argument("--workspace", default=None)
+
+    p = sub.add_parser(
+        "generate",
+        help="Generate a configured template from a base that has a recipe.",
+    )
+    p.add_argument("--base", dest="base", default=None)
+    p.add_argument("--id", dest="new_id", default=None)
+    p.add_argument("--set", dest="sets", action="append", default=[],
+                   metavar="KEY=VALUE")
+    p.add_argument("--workspace", default=None)
 
 
 # --------------------------------------------------------------------------

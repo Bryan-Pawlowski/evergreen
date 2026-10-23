@@ -4,7 +4,9 @@ An interactive HTML Configurator, usable in the Hermes desktop app, that turns a
 set of structured settings into a **new LaTeX template directory** in a career
 workspace's `templates.local/`.
 
-Status: planned 2026-10-22. Nothing in this plan is implemented yet.
+Status: in progress on `feature/template-configurator`. **M1 and M2 are done**;
+M3 (the backend door), M4 (the desktop pane) and M5 (distribution) are not.
+Draft PR: <https://github.com/Bryan-Pawlowski/evergreen/pull/1>.
 
 ---
 
@@ -349,17 +351,23 @@ attention on the semantic judgement rather than on transcription.
 
 Concretely, the repo contains:
 
-- the recipe engine, the generator, the schemas, the tests, and the CI
-  gates — the *capability*;
-- `templates/plain/recipe.yaml` — a recipe whose values are the
-  template's own, describing what the shipped `plain` already does.
+- the recipe engine, the generator, the proposal engine, the liveness
+  check, the schemas, the tests, and the CI gates — the *capability*;
+- **no recipe at all.** A recipe names real lines in a real template, so
+  it belongs to whoever owns that template. The shipped templates carry
+  none, and the repo's own tests derive one at run time with the same
+  engine the Configurator uses.
 
 The repo contains **no** change to any shipped template's colours, and
-**no** change to shipped renderer behaviour. Both shipped templates and
-the renderer are byte-for-byte identical to `main`:
+**no** change to shipped renderer behaviour. The shipped templates and
+the renderer are byte-for-byte identical to `main` — proved by comparing
+the rendered *pixels* of all four templates, not by reading the diff:
 
 ```
-git diff --quiet main -- evergreen/dialects.py templates/*/cv.tex
+plain    d611b887e9d515ea   == main
+yaac     4517512fba3714c0   == main
+altacv   926ab85e59346534   == main
+minimal  7aa8b3a215231b48   == main
 ```
 
 The workspace contains:
@@ -369,21 +377,25 @@ The workspace contains:
   `\definecolor`, so the hex the template declares is the hex that
   renders. **Verified**: the workspace PDF now carries `#8F0D0D`; the
   backup of the same file still carries the class's `#b30000`.
+- `templates.local/evergreen/recipe.yaml` — the workspace template's own
+  recipe, with three settings (`basecolor`, `leftcolumn`,
+  `rightcolumnlength`), each proved live by a render.
 - any future knob whose fix would require touching the renderer.
 
-**Why this is the right boundary.** A recipe is *the user's* statement
-of which knobs they want. The defaults in it are the template's own
-values, so shipping one is not contamination — but the moment a value
-becomes *this user's* choice, it belongs in the workspace. And a change
-to a shipped template or to the renderer is a change to the plugin's
-behaviour for everybody, which is a release decision, not a feature
-commit.
+**Why this is the right boundary.** A recipe is a statement about which
+lines of *this* template are worth exposing. The moment a value becomes
+a *choice* — a colour, a width — it belongs to the workspace, because
+the plugin's job is to make the choice possible, not to make it. And a
+change to a shipped template or to the renderer is a change to the
+plugin's behaviour for everybody, which is a release decision, not a
+feature commit.
 
-The consequence for M2: **the three remaining recipes are authored in
-the workspace, not in the repo.** The repo's role is to make them
-possible and to prove the seam works. `plain`'s recipe stays in the repo
-because it is a worked example that the CI gates exercise — but a
-recipe carrying a *chosen* colour would not.
+The consequence for M2: **no recipe is authored in the repo.** The
+repo's role is to make them possible and to prove the seam works — and
+it proves it by deriving a recipe for each shipped template at run time
+and taking it all the way through to a compiled PDF. That is a
+stronger gate than a hand-written recipe would be, because it exercises
+the whole chain: propose, author, apply, generate, render.
 
 One more consequence, measured: the `plain` template's "bullet spacing"
 knob was dead, because the `plain` dialect writes an inline `\itemsep`
@@ -392,50 +404,72 @@ dialect changed — shipped renderer behaviour — so it does not ship. The
 knob was replaced with "bullet indent" (`leftmargin`), which the
 dialect does *not* override, so it is live. The lesson generalises: **a
 knob that is dead because the renderer overrides the template's own
-value is a knob the repo cannot offer.**
+value is a knob the repo cannot offer.** The proposal engine now
+*detects* this case, and flags it.
 
 **The per-knob liveness check is what makes any of this trustworthy.**
 A candidate is not a setting until a render proves that changing it
 changes the page. The generator proposes; the liveness check disposes.
 That is the division of labour, and it is why the generator can be
-allowed to guess.
+allowed to guess. It is implemented in `evergreen/liveness.py`, and it
+is wired into the authoring path: `hermes career author` proposes,
+proves, and writes the recipe **with the dead settings left out**.
 
 **The liveness check must not judge from one profile.** A setting can
-be dead for the sample and live for real content — `emergencystretch`
-is the example: it only matters when a line would otherwise overflow,
-and the sample has no such line. The check therefore runs each knob
-against **two** profiles (the sample, plus a stress profile with an
-unbreakable long word) and requires the knob to change the page for
-*some* profile, not for every one.
+be dead for ordinary content and live for content that overflows, so
+the check runs each knob against **two** profiles — the caller's own,
+plus a stress profile with an unbreakable long word — and requires the
+knob to change the page for *some* profile, not for every one.
+
+**And it must judge from the pixels, not the text.** A text probe
+reports font sizes and left edges; it cannot see a change that only
+affects an image overlay, so it reports a false "no change" for a knob
+that plainly moved something. `minimal`'s band is a PNG.
+
+**What the check actually found.** `emergencystretch` is a real LaTeX
+setting, set in the `minimal` template, and the proposal engine has no
+reason to distrust it. The audit assumed a stress profile would make it
+visible. Measured against the real renderer, **it is not**: no content
+the check tried — a 34-character word, a 50-character word, a
+paragraph of long words, a repeated long word — makes the pages differ
+at all. So it is dead, the gate excludes it, and the recipe does not
+offer it. The general lesson: **the generator cannot know this, so the
+render decides.**
 
 **Where it fits.** As a helper in the authoring path, not a runtime
-component:
+component. Two commands, and the order matters:
 
 - `hermes career recipe <template>` — read a template, propose a
   `recipe.yaml` skeleton with the mechanical candidates filled in, and
   mark every candidate that needs a human decision (a colour that is
   declared but unreferenced, a derived colour, a class option, a
-  non-literal value, an ambiguous line). The human edits the proposals
-  and the file is written.
+  non-literal value, an ambiguous line, a macro that is never used, a
+  value the dialect writes inline). **It writes nothing.**
+- `hermes career author <template> --path <dir>` — propose, then
+  **prove** each proposal with a real render, then write the recipe with
+  the settings that survived. The traps never become knobs, and the
+  settings that change nothing are left out.
 - This is what makes the plan's "the template author owns the recipe"
   decision *practical*: today, authoring a recipe means hand-transcribing
   LaTeX patterns, which is exactly the error-prone part. A generator that
   transcribes and flags the traps removes the transcription and keeps the
   judgement.
 
-**Where it does not fit.** The generator must not *write a recipe
-unattended*. Every trap above produces a recipe that is syntactically
-valid and semantically wrong, and the only defence is the human. A
-generator that emitted a finished recipe would ship controls that do
-nothing, derived colours that break the build, and class options treated
-as values.
+**Where it does not fit.** The generator must not write a recipe
+*unattended*, on the strength of the proposals alone. Every trap above
+produces a recipe that is syntactically valid and semantically wrong,
+and the only defence is a render plus a human. What the implementation
+does instead is put the **render** in the loop: the authoring path
+proposes, proves, and writes only what a render says is real, and it
+says plainly which settings it left out and why. The human still edits
+the result; the machine just refuses to hand over a control that does
+nothing.
 
-**Milestone.** M2, alongside the three remaining hand-written recipes. The
-generator is the tool that *writes* those three, so building it first is
-strictly better than writing them by hand and then automating the
-process. It also earns its keep on third-party templates in
-`templates.local/`, which is the case the plan's "the template author owns
-the recipe" decision was made for.
+**Milestone.** M2, and it is done. The generator is the tool that
+*writes* a recipe, so building it first is strictly better than writing
+recipes by hand and then automating the process. It also earns its keep
+on third-party templates in `templates.local/`, which is the case the
+plan's "the template author owns the recipe" decision was made for.
 
 ### 3.2c The audit: what each base actually has
 
@@ -447,10 +481,10 @@ produces a byte-identical fingerprint — so these results are stable.
 
 | template | LIVE candidates | DEAD (and why) |
 |---|---|---|
-| `plain` | `\parindent`, `\parskip`, documentclass size, `leftmargin` | `itemsep` — the `plain` dialect writes an inline `\itemsep` that overrides the template's `\setlist` |
+| `plain` | `\parindent`, `\parskip`, documentclass size, `leftmargin`, `margin` | `itemsep` — the `plain` dialect writes an inline `\itemsep` that overrides the template's `\setlist` |
 | `yaac` | `\leftcolumn`, `\rightcolumnlength` | `basecolor` — the class freezes `linkcolor` at load time (§3.2b trap 5; **fixed in the workspace**, §3.2d) |
-| `altacv` | all 5 base colours, `\columnratio` | — (the 8 `\colorlet`s are derived, not settable) |
-| `minimal` | `\parindent`, `\bandH`, `\washW`, `\secspace`, `\rulegap`, `\headgap`, `\jobspace`, `\titlegap`, `\bulletspace`, `\itemspace`, `\columnratio`, `Ink`, `InkSoft`, `RuleGold` | `Band`, `ColDark`, `ColWash` — the pixels are a PNG; `IcoCol` — `\faIco` is redefined later to use `RuleGold`; `\leftcolW` — defined, never used |
+| `altacv` | all 5 base colours, `\columnratio`, the 4 font sizes | — (the 8 `\colorlet`s are derived, not settable) |
+| `minimal` | `\parindent`, `\bandH`, `\washW`, `\secspace`, `\rulegap`, `\headgap`, `\jobspace`, `\titlegap`, `\bulletspace`, `\itemspace`, `\columnratio`, `Ink`, `InkSoft`, `RuleGold`, `Paper`, `Mist`, `GoldenEarth` | `Band`, `ColDark`, `ColWash` — the pixels are a PNG; `IcoCol` — `\faIco` is redefined later to use `RuleGold`; `\leftcolW` — defined, never used; `\emergencystretch` — real, but nothing makes it visible (§3.2d) |
 
 Two results deserve a note:
 
@@ -460,9 +494,14 @@ Two results deserve a note:
   `\color{GoldenEarth}`), not by the template. A generator that only
   reads `cv.tex` would wrongly discard three live settings. It must
   read the dialect too.
-- **`\emergencystretch` in `minimal` reads DEAD** and is arguably not
-  dead: it only matters when a line would overflow. Hence the
-  two-profile liveness rule above.
+- **`\emergencystretch` in `minimal` reads DEAD, and is.** The audit
+  assumed it was "arguably not dead" — that it would show up for
+  content that overflows. The implemented liveness check, against the
+  real renderer and four different stress contents, says otherwise: the
+  pages are byte-identical. The two-profile rule stays, because a
+  setting can still be live only under stress; this one just is not.
+  The generator cannot tell the difference, which is exactly why the
+  render decides.
 
 The generator's input is therefore **three** sources, not one: the
 template's `cv.tex`, the vendored class file, and the dialect the
@@ -609,47 +648,55 @@ seam; the workspace holds the taste.
 
 *Goal: every shipped template is generatable, and the repo can prove it.*
 
-- Recipes for `yaac`, `altacv`, `minimal` — each knob mapped to the exact
-  line it replaces, including the `\colorlet` cascade in `altacv` and the
-  eso-pic sidebar geometry in `minimal`. No `cv.tex` edit is needed for any
-  of them, which was the point of the §3.1 revision. **These are authored
-  in the workspace, not in the repo** (§3.2d): a recipe that carries a
-  chosen value is a choice. The repo's job is to make them possible and
-  to prove the seam works.
-- `hermes career recipe <template>` — the **recipe generator** (§3.2b): read
-  a template, propose a `recipe.yaml` skeleton with the mechanical
-  candidates filled in, and flag the ones that need a human decision — a
-  colour that is declared but never referenced, a derived colour, a class
-  option, a non-literal value, an ambiguous line. It proposes; it does not
-  write, and it writes where the recipe belongs: the workspace.
-- `hermes career generate --base <id> --id <new-id> [--set k=v …]` — the
-  headless, scriptable entry point. It is also the agent-facing surface; a
-  `career_configure` tool is added in the same pass, which means
-  `plugin.yaml`'s `provides_tools` and `scripts/check_manifest.py`'s
-  declared-vs-registered comparison both get updated in the same commit.
-- New CI job: every shipped template's recipe validates, and generating from
-  each recipe produces a template that compiles and passes the existing
-  render-parity check. The job must have **teeth** — a planted broken recipe
-  is asserted to be rejected — in the same spirit as the existing negative
-  tests.
-- **Every knob must be proven live, one at a time.** A setting that is
-  accepted and then changes nothing is the worst outcome for a form, because
-  the user cannot tell it from a setting that worked. This is checked
-  **per knob**, not on the settings as a whole: changing every setting at
-  once lets a dead knob hide behind a live one. The check compares a
-  *pixel fingerprint* of the rendered page, not the text geometry — a text
-  probe cannot see a change that only affects an image overlay, and would
-  report a false "no change" for a knob that plainly moved something.
-  Shipped in M1 (`evergreen/test_recipe.py`, `test_every_knob_is_live`); M2
-  extends it to the three new recipes as they land.
-- A self-contained desktop-surface lint in `scripts/`, mirroring the subset of
-  `plugin_validate_desktop.py` that CI can run without a new Hermes. Without
-  it, `desktop/plugin.js` lands with no CI coverage at all, since
-  `hermes plugins validate` cannot run in CI.
+**Status: done.** What shipped, and where each piece lives:
+
+- **The recipe generator** (`evergreen/propose.py`). It reads three
+  sources — the template's `cv.tex`, its vendored class, and its
+  dialect — and proposes the settings the template could expose. It
+  flags the traps: a colour that is declared but never referenced, a
+  derived colour, a colour the class freezes at load time, a colour
+  only reachable through a macro that is redefined later, a class
+  option, a non-literal value, an ambiguous line, a macro that is
+  never used, and a value the dialect writes inline. It writes nothing
+  on its own.
+  - `hermes career recipe <template>` — report the proposals and the
+    traps. Read-only.
+  - `hermes career author <template> --path <dir>` — propose, **prove**,
+    then write the recipe with the settings that survived. The dead
+    ones are left out, and the command says which and why.
+- **The liveness gate** (`evergreen/liveness.py`). Per knob, one knob
+  at a time, against a real render, compared on a **pixel fingerprint**
+  rather than the text geometry — a text probe cannot see a change that
+  only affects an image overlay, and would report a false "no change"
+  for a knob that plainly moved something. Run against more than one
+  profile, because a setting can be live only under content that
+  overflows.
+- **`hermes career generate --base <id> --id <new-id> [--set k=v …]`**
+  — the headless, scriptable entry point, and the agent-facing
+  `career_configure` tool in the same pass. `plugin.yaml`'s
+  `provides_tools` and `scripts/check_manifest.py`'s declared-vs-
+  registered comparison both got updated in the same commit.
+- **The CI gates.** `scripts/check_generated_parity.py` proves a
+  generated template carries the base's content and shows the change.
+  It derives its own recipe at run time with the same engine, so the
+  repo carries no concrete recipe and the gate still exercises the
+  whole chain — propose, author, apply, generate, render — which is
+  stronger than a hand-written recipe would be. `evergreen/test_recipe.py`
+  and `evergreen/test_propose.py` cover the rest.
+- **The workspace recipe** — `templates.local/evergreen/recipe.yaml`
+  in the active workspace, with three settings, each proved live.
+
+*What is not done, and is M3+:* the desktop pane, the backend door, and
+the distribution. The desktop-surface lint (`scripts/`, mirroring the
+subset of `plugin_validate_desktop.py` that CI can run without a new
+Hermes) is still outstanding, and it belongs with M4, where
+`desktop/plugin.js` first exists to be linted.
 
 *Done when:* all four bases generate, compile, pass parity, and the CLI
-produces a template the existing `career_build` renders. Every knob of every
-recipe is proven live by the per-knob check.
+produces a template the existing `career_build` renders. Every knob of
+every recipe is proven live by the per-knob check. **Met**, with one
+finding: `minimal`'s `emergencystretch` is not live and is excluded
+(§3.2d).
 
 *Risks:* `minimal`'s sidebar geometry is coupled to its text measure — the
 evergreen-resume skill records that a panel column's text measure and its rule
@@ -758,7 +805,21 @@ reads and that `check_manifest.py` would then have to learn about.
 in `templates.local/` ships its own `recipe.yaml` and therefore its own knobs,
 with no plugin change. The cost is that the recipe format is a public contract
 and must be stable. *Rejected:* plugin-owned recipes, which would make every
-new template require a plugin release to be configurable.
+new template require a plugin release to be configurable. **Extended during
+M2:** the *shipped* templates carry no recipe at all. A recipe points at real
+lines in a real template, so it belongs to whoever owns that template — the
+plugin's job is to make the choice possible, not to make it. The repo's own
+tests therefore derive a recipe at run time, with the same engine the
+Configurator uses, and take it all the way to a compiled PDF.
+
+**The generator proposes; the render disposes.** The recipe generator reads
+the template, its class, and its dialect, and proposes the settings the
+template could expose — flagging the traps it can see. It does not decide
+whether a setting is real, because it cannot: only a render can show that
+changing a setting changes the page. So the authoring path is propose, prove,
+write-what-survived, and the settings that change nothing are left out.
+*Rejected:* the generator writing a finished recipe unattended, which would
+ship controls that do nothing.
 
 **A recipe names the lines it rewrites; the base template is not edited.** The
 recipe's `latex` pattern points at the line as it already exists in `cv.tex`,

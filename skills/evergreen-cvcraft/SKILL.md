@@ -196,17 +196,33 @@ artifacts.
 
 ### The recipe, if your template has one
 
-`plain/` now ships a `recipe.yaml`: the settings the template exposes, each
-naming the exact line of `cv.tex` it rewrites. **If you copy `plain/` and
-edit its `cv.tex`, that recipe comes with the copy and may no longer
-match.** A pattern that matches zero times (you changed the line) or more
-than once is an error, and the generator refuses to guess.
+A `recipe.yaml` names the settings a template exposes, each naming the
+exact line of `cv.tex` it rewrites. **The shipped templates do not carry
+one** — a recipe points at real lines in a real template, so it belongs to
+whoever owns that template, not to the plugin. Your own template in
+`templates.local/<id>/` can have one.
 
-So after copying `plain/`, either delete `recipe.yaml` — the template is
-complete without one, it just has no adjustable settings — or update the
-patterns to match your new `cv.tex`. A recipe's `latex` field is a
-*pattern*, not a literal: `<<value>>` is where the value goes, and the rest
-of the pattern must appear in `cv.tex` exactly as written.
+If you copy a template that has a recipe and edit its `cv.tex`, the
+recipe comes with the copy and may no longer match. A pattern that
+matches zero times (you changed the line) or more than once is an error,
+and the generator refuses to guess.
+
+So after copying a template with a recipe, either delete `recipe.yaml` —
+the template is complete without one, it just has no adjustable settings
+— or update the patterns to match your new `cv.tex`. A recipe's `latex`
+field is a *pattern*, not a literal: `<<value>>` is where the value goes,
+and the rest of the pattern must appear in `cv.tex` exactly as written.
+
+To write one, ask for it:
+
+```
+hermes career author <template-id> --path <the-template-directory>
+```
+
+That proposes the settings the template could expose, proves each one
+with a real render, and writes the recipe with the settings that survived
+— a setting that changes nothing is left out, because a control that
+does nothing is worse than no control. Read it, edit it, and it is yours.
 
 Full contract: `templates/README.md`.
 

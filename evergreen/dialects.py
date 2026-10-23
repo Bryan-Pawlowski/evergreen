@@ -19,6 +19,8 @@ Text is converted through ``ctx["inline"]`` (the inline markup converter) or
 from __future__ import annotations
 
 import importlib.util
+import inspect
+import re
 import sys
 from pathlib import Path
 from typing import Any, Callable
@@ -773,5 +775,51 @@ def known_dialects() -> list[str]:
     return sorted(_BUILTIN) + ["custom"]
 
 
-__all__ = ["Ctx", "get_dialect", "known_dialects", "plain_render", "yaac_render",
-           "altacv_render", "minimal_render", "_mk_ctx"]
+def dialect_source(name: str) -> str:
+    """The source of one dialect, and the helpers it calls.
+
+    The recipe generator needs to know what a *specific* dialect emits,
+    not what any dialect emits: ``plain`` writes an inline ``\\itemsep``
+    that overrides its templates' own ``\\setlist``, and reading the
+    whole module would wrongly taint every other template with it.
+
+    A dialect's render function delegates to private helpers -- the
+    ``plain`` dialect's inline ``\\itemsep`` lives in ``_plain_entry``,
+    not in ``plain_render`` -- so the helpers it calls are included
+    too. Only the helpers the dialect actually calls, so the result
+    stays scoped to that dialect.
+
+    Returns an empty string for a dialect with no source to read (a
+    custom one is on disk, not here).
+    """
+    function = _BUILTIN.get(name)
+    if function is None:
+        return ""
+    try:
+        source = inspect.getsource(function)
+    except (OSError, TypeError):  # pragma: no cover - builtins are readable
+        return ""
+
+    # Pull in the private helpers this dialect calls, so a value they
+    # write inline is seen.
+    for helper in _called_helpers(source):
+        try:
+            source += "\n" + inspect.getsource(helper)
+        except (OSError, TypeError):  # pragma: no cover
+            continue
+    return source
+
+
+def _called_helpers(source: str) -> list[Any]:
+    """The module-level private functions a source calls."""
+    called: list[Any] = []
+    for name in re.findall(r"\b(_[a-z][a-z0-9_]*)\s*\(", source):
+        helper = globals().get(name)
+        if callable(helper) and helper not in called:
+            called.append(helper)
+    return called
+
+
+__all__ = ["Ctx", "get_dialect", "known_dialects", "dialect_source",
+           "plain_render", "yaac_render", "altacv_render", "minimal_render",
+           "_mk_ctx"]
