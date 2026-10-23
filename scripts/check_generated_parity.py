@@ -34,6 +34,7 @@ change. 1 = it does not. 2 = tectonic is not installed.
 """
 from __future__ import annotations
 
+import hashlib
 import sys
 import tempfile
 from pathlib import Path
@@ -56,7 +57,7 @@ SETTINGS = {
     "base_size": "12pt",
     "margin": "1in",
     "section_size": "\\LARGE",
-    "item_spacing": "4pt",
+    "bullet_indent": "18pt",
 }
 
 
@@ -79,8 +80,20 @@ def _compile(template, tmp: Path, tag: str) -> tuple[Path, str]:
     return result.pdf, _read_text_layer(result.pdf)
 
 
-def _geometry(pdf: Path) -> dict:
-    """The text geometry of a PDF: the shape of the text on the page.
+def _render_fingerprint(pdf: Path, dpi: int = 72) -> str:
+    """A fingerprint of what the page actually *looks like*.
+
+    A text-geometry probe (font sizes, left edges, page count) is not
+    enough. It cannot see a change that only affects an image overlay:
+    ``minimal``'s band and dark column are PNGs, so resizing the band
+    changes the pixels and the text layer not at all. Measured: growing
+    ``\\bandH`` from 100pt to 140pt moves the banner and changes nothing
+    the text geometry reports.
+
+    A pixel fingerprint sees every visible change, and — just as
+    importantly — it is *identical* when nothing changed. That is what
+    makes it able to prove a knob is dead: if changing a knob leaves
+    the fingerprint untouched, the knob does nothing.
 
     ``pdftotext`` cannot give this, so pymupdf is used directly and the
     check is skipped (not failed) when it is absent -- the content
@@ -89,19 +102,46 @@ def _geometry(pdf: Path) -> dict:
     try:
         import pymupdf
     except Exception:
+        return ""
+    digest = hashlib.sha256()
+    # The document is closed explicitly: on Windows an open file cannot be
+    # deleted, and the temp tree is cleaned up on the way out.
+    doc = pymupdf.open(str(pdf))
+    try:
+        for page in doc:
+            digest.update(page.get_pixmap(dpi=dpi).samples)
+    finally:
+        doc.close()
+    return digest.hexdigest()[:16]
+
+
+def _geometry(pdf: Path) -> dict:
+    """The text geometry of a PDF: the shape of the text on the page.
+
+    Reported for context, but the *decision* is made on the pixel
+    fingerprint -- see :func:`_render_fingerprint` for why text geometry
+    alone is not sufficient.
+    """
+    try:
+        import pymupdf
+    except Exception:
         return {}
     doc = pymupdf.open(str(pdf))
     sizes: list[float] = []
     lefts: list[float] = []
-    for page in doc:
-        for block in page.get_text("dict")["blocks"]:
-            for line in block.get("lines", []):
-                for span in line.get("spans", []):
-                    if span["text"].strip():
-                        sizes.append(round(float(span["size"]), 1))
-                        lefts.append(round(float(span["bbox"][0]), 1))
+    try:
+        pages = doc.page_count
+        for page in doc:
+            for block in page.get_text("dict")["blocks"]:
+                for line in block.get("lines", []):
+                    for span in line.get("spans", []):
+                        if span["text"].strip():
+                            sizes.append(round(float(span["size"]), 1))
+                            lefts.append(round(float(span["bbox"][0]), 1))
+    finally:
+        doc.close()
     return {
-        "pages": doc.page_count,
+        "pages": pages,
         "min_size": min(sizes) if sizes else None,
         "max_size": max(sizes) if sizes else None,
         "min_left": min(lefts) if lefts else None,
@@ -178,16 +218,25 @@ def main() -> int:
                     findings.append(f"{slot}: missing {claim!r}")
 
         # --- 2. Visibility: the change actually shows up on the page.
+        #
+        # This is decided on the *pixel fingerprint*, not the text
+        # geometry: a text probe cannot see an image-overlay change
+        # (minimal's band is a PNG), and would report a false "no
+        # change" for a knob that plainly moved something.
         base_geo = _geometry(base_pdf)
         gen_geo = _geometry(gen_pdf)
-        if not base_geo or not gen_geo:
+        base_fp = _render_fingerprint(base_pdf)
+        gen_fp = _render_fingerprint(gen_pdf)
+        if not base_fp or not gen_fp:
             print("  (pymupdf is not installed; the visibility check is skipped)")
+        elif base_fp == gen_fp:
+            findings.append(
+                "the generated PDF renders identically to the base "
+                f"(fingerprint {gen_fp}); the settings had no visible effect")
         else:
-            if base_geo == gen_geo:
-                findings.append(
-                    "the generated PDF's text geometry is identical to the base's "
-                    f"({gen_geo}); the settings had no visible effect")
-            else:
+            print(f"  base fingerprint:     {base_fp}")
+            print(f"  generated fingerprint: {gen_fp}")
+            if base_geo and gen_geo:
                 print(f"  base geometry:     {base_geo}")
                 print(f"  generated geometry: {gen_geo}")
 
