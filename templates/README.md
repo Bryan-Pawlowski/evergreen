@@ -8,6 +8,7 @@ required, one optional:
 templates/<id>/
 ├── template.yaml     ← manifest (required)
 ├── cv.tex            ← the LaTeX source with slot markers (required)
+├── recipe.yaml       ← the settings this template exposes (optional)
 ├── fonts/            ← vendored font files (optional)
 ├── fonts.conf        ← fontconfig file pointing at ./fonts (optional)
 ├── <class>.cls       ← a vendored LaTeX class (optional)
@@ -64,6 +65,40 @@ Recognised slot names:
 A slot with no content renders as nothing (the marker block is removed, leaving
 no blank space). A slot marker for an unknown name is a build error, not a
 silent no-op.
+
+## `recipe.yaml` — the settings a template exposes
+
+Optional. A recipe declares which settings a template lets someone change, and
+which line of `cv.tex` each setting rewrites. It is what the Configurator
+builds its form from, and what `hermes career generate` reads.
+
+```yaml
+id: plain                       # must match the template's id
+name: 'Plain'
+knobs:
+  - id: margin
+    label: 'Page margin'        # the label shown in the UI
+    description: 'The margin around the page.'
+    type: length                # enum | length | text | number | color
+    default: '0.75in'
+    latex: '\usepackage[margin=<<value>>]{geometry}'
+```
+
+`latex` is a **pattern**, not a literal: `<<value>>` is where the setting's
+value goes. The generator finds that pattern in `cv.tex` and replaces it.
+
+Three rules, all enforced:
+
+- **The pattern must match exactly once.** Zero matches means the template
+  drifted away from the recipe; more than one means the rewrite would be
+  ambiguous. Both are errors — a recipe never half-applies.
+- **Patterns are substrings, not whole lines.** Keep just enough context to
+  be unique, so editing an unrelated part of a line does not break the recipe.
+- **Applying the defaults changes nothing.** A template with a recipe renders
+  byte-for-byte identically to one without, so adding a recipe is safe.
+
+A template without a recipe is still a complete template — it just has no
+adjustable settings, and the Configurator offers nothing to adjust.
 
 ## Dialects
 

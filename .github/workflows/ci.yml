@@ -41,6 +41,14 @@ jobs:
       - name: Self-test (compiles every shipped template)
         run: python -m evergreen.selftest
 
+      - name: Recipe self-test (the template-configurator seam)
+        # The recipe seam is what the Configurator is built on: a recipe
+        # points at the lines a template already has, and a recipe that
+        # has drifted from its template must fail loudly. This job
+        # compiles every shipped template AND a generated one, so a
+        # broken seam cannot reach a release.
+        run: python -m evergreen.test_recipe
+
       # `hermes plugins validate` is the authoritative gate, but it needs a
       # Hermes new enough to have it, and the PyPI release lags the git
       # install. This is a self-contained subset of the same manifest checks,
@@ -134,6 +142,14 @@ jobs:
 
       - name: Prove every template's content reaches the PDF
         run: python scripts/check_render_parity.py --out parity_pdfs
+
+      # The Configurator generates templates. A generated template is the
+      # one a user actually ships, and the settings rewrite runs over the
+      # source before rendering -- so it needs the same content proof,
+      # PLUS a check that the settings were visible at all (a rewrite
+      # that was accepted and silently discarded would otherwise pass).
+      - name: Prove a generated template carries its content and shows the change
+        run: python scripts/check_generated_parity.py
 
       # The check must be able to fail: prove it passes on the good templates
       # and fails on a profile with a dropped field (a valid, paged PDF with

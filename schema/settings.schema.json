@@ -1,0 +1,43 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Bryan-Pawlowski/evergreen/schema/settings.schema.json",
+  "title": "Template settings",
+  "description": "A structured set of template settings, as the Configurator collects them. The per-setting types are checked against the base template's recipe, not here: this schema fixes the envelope.",
+  "type": "object",
+  "required": ["base", "id", "settings"],
+  "additionalProperties": false,
+  "properties": {
+    "base": {
+      "description": "The id of the template the settings are based on.",
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9._-]{0,63}$"
+    },
+    "id": {
+      "description": "The id of the template to write. It becomes a directory name, so it is one safe path segment.",
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9._-]{0,63}$"
+    },
+    "name": {
+      "description": "The human-facing name of the generated template.",
+      "type": "string",
+      "minLength": 1
+    },
+    "description": { "type": "string" },
+    "workspace": {
+      "description": "The career workspace whose templates.local/ the template is written into.",
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9._-]{0,63}$"
+    },
+    "settings": {
+      "description": "The chosen value per knob id. Every key must be a knob of the base template's recipe.",
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": {
+        "type": ["string", "number", "boolean"]
+      },
+      "propertyNames": {
+        "pattern": "^[a-z0-9][a-z0-9._-]{0,63}$"
+      }
+    }
+  }
+}

@@ -28,6 +28,9 @@ from .career import (CareerProfile, CareerProfileError, Workspace,
                       _hermes_home_markers, find_workspace, hermes_home,
                       list_workspaces, validate, validate_workspace_name,
                       workspace_path_for_name)
+from .generate import GenerateError, generate_template  # noqa: F401  (re-exported)
+from .recipe import (Recipe, RecipeError, apply_settings,  # noqa: F401  (re-exported)
+                     load_recipe)
 from .render import (TemplateError, discover_templates, render_tex, slots_in, stage)
 from .render import load_template  # noqa: F401  (re-exported)
 
