@@ -897,6 +897,21 @@ driven**: the half is copied into `desktop-plugins/<id>/` only on a Rescan,
 install or start, and it ships disabled, so the pane appears when a person
 enables it — that step is in the README rather than automated.
 
+The **authoritative** validator was run against the half, which is what M5's
+"run `hermes plugins validate` at release time" item has been waiting for:
+
+```
+$ hermes plugins validate .
+✓ loadable — entry: __init__.py, desktop/plugin.js
+✓ desktop surface — stays inside the plugin SDK surface
+Validation passed.
+```
+
+So the ported lint in `scripts/check_desktop_plugin.py` and Hermes' own agree on
+this file. The port exists because CI cannot install a specific Hermes; the
+authoritative run is what keeps the port honest, and it is cheap enough to
+repeat whenever the half changes.
+
 **Two traps worth recording, both found by mounting it:**
 
 - **`jsx()` and `jsxs()` differ in whether children arrays are validated.**
