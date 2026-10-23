@@ -111,9 +111,14 @@ class _Door:
     the address the desktop pane calls with ``ctx.rest('/workspaces')``.
     """
 
-    def __init__(self, client, prefix: str):
+    def __init__(self, client, prefix: str, router=None):
         self.client = client
         self.prefix = prefix.rstrip("/")
+        # Kept so a test can reach a handler's own globals. Starlette's
+        # TestClient does not promise where it stores the app, and the copies
+        # in ``sys.modules`` are not the one this router's handlers resolve
+        # their globals in (``_load_router`` executes the file per call).
+        self.router = router
 
     def get(self, path: str, **kwargs):
         return self.client.get(self.prefix + path, **kwargs)
@@ -128,7 +133,7 @@ def _client(router, prefix: str) -> _Door:
 
     app = FastAPI()
     app.include_router(router, prefix=prefix)
-    return _Door(TestClient(app), prefix)
+    return _Door(TestClient(app), prefix, router)
 
 
 def _clean_env() -> dict:
@@ -215,6 +220,125 @@ def test_workspaces(c: _Checker, client) -> None:
             str(entry.get("templates_local")))
     c.check("workspaces: it reports where tectonic is", bool(payload.get("tectonic")),
             str(payload.get("tectonic")))
+
+
+def test_configured_workspace(c: _Checker, client, home: Path) -> None:
+    """A configured workspace is addressable by the name the listing gives it.
+
+    The pane's picker offers the names ``/workspaces`` returns; a workspace the
+    operator configured from outside the Hermes home is listed under its
+    *directory* name, which is not a name under the Hermes home at all. Resolving
+    every bare name with ``workspace_path_for_name`` therefore refused the one
+    name the door had just handed the picker, and the refusal named it back.
+
+    **The setting is substituted at its seam, not written to a config file.** The
+    door reads it through ``hermes_cli``, which a bare checkout (and this repo's
+    CI) does not have — a test that needed it would ``SKIP`` exactly where the
+    gate has to run. So the resolution is proved against
+    ``_configured_workspace_path`` patched to answer, and the *wiring* of that
+    seam to Hermes' config is checked separately, below, when Hermes is present.
+
+    Runs last and restores the seam again: with a configured workspace in place,
+    a request that names nothing resolves to it, and the earlier tests rely on
+    the named workspace being the only candidate.
+    """
+    print("\n-- the configured workspace --")
+    # The router's OWN namespace, not sys.modules: `_load_router()` executes the
+    # file on every call, and the module-loads test calls it a second time — so
+    # the copy registered under the module name is not the copy these handlers
+    # resolve their globals in. Patching by name would patch the copy nobody
+    # calls, and every check below would fail for a reason that is not the door's.
+    namespace = None
+    for route in getattr(client.router, "routes", []):
+        if getattr(route, "path", "").endswith("/workspaces"):
+            namespace = route.endpoint.__globals__
+            break
+    c.check("configured: the handlers' own namespace is reachable",
+            namespace is not None)
+    if namespace is None:
+        return
+
+    outside = Path(tempfile.mkdtemp(prefix="evergreen-api-outside-"))
+    atexit.register(shutil.rmtree, str(outside), True)
+    outside_ws = Workspace(outside / "shopcv")
+    outside_ws.create()
+    outside_ws.save(CareerProfile(SAMPLE))
+
+    # The wiring half, where Hermes is installed: the real seam must find the key
+    # at `plugins.entries.evergreen.settings.workspace_path`. It writes into the
+    # throwaway home and reads it back, so a moved key fails here rather than in
+    # a pane nobody can point at a workspace.
+    try:
+        from hermes_cli.config import load_config  # noqa: F401
+    except Exception:
+        print("[SKIP] configured: the config wiring -- hermes_cli is not importable here")
+    else:
+        config_path = home / "config.yaml"
+        config_path.write_text(
+            "plugins:\n"
+            "  entries:\n"
+            "    evergreen:\n"
+            "      settings:\n"
+            f"        workspace_path: {json.dumps(str(outside_ws.root))}\n",
+            encoding="utf-8",
+        )
+        try:
+            c.check("configured: the setting is read from the plugin's own key",
+                    namespace["_configured_workspace_path"]() == str(outside_ws.root),
+                    str(namespace["_configured_workspace_path"]()))
+        finally:
+            config_path.unlink(missing_ok=True)
+
+    original = namespace["_configured_workspace_path"]
+    namespace["_configured_workspace_path"] = lambda: str(outside_ws.root)
+    try:
+        listed = client.get("/workspaces")
+        c.check("configured: 200", listed.status_code == 200, listed.text[:300])
+        entries = {entry["name"]: entry for entry in listed.json().get("workspaces") or []}
+        c.check("configured: the workspace outside the home is listed",
+                "shopcv" in entries, str(sorted(entries)))
+        c.check("configured: and it says it came from the setting",
+                (entries.get("shopcv") or {}).get("source") == "configured",
+                str(entries.get("shopcv")))
+        c.check("configured: the named workspace is still listed beside it",
+                "testws" in entries, str(sorted(entries)))
+
+        # The defect: the picker hands back the name it was given.
+        by_name = client.get("/templates", params={"workspace": "shopcv"})
+        c.check("configured: its own listed name resolves (was a 404 naming it)",
+                by_name.status_code == 200, by_name.text[:300])
+        c.check("configured: and it resolved to the workspace, not to the home",
+                (by_name.json().get("workspace") or {}).get("path")
+                == str(outside_ws.root),
+                str(by_name.json().get("workspace")))
+
+        # A first-ever pane load sends no workspace at all. The setting is not a
+        # guess, so it answers — otherwise merely *having* a configured workspace
+        # would break the default that worked when only one workspace existed.
+        unset = client.get("/templates")
+        c.check("configured: with nothing passed it is the one used",
+                unset.status_code == 200
+                and (unset.json().get("workspace") or {}).get("name") == "shopcv",
+                unset.text[:300])
+
+        by_path = client.get("/templates", params={"workspace": str(outside_ws.root)})
+        c.check("configured: the path form still addresses it",
+                by_path.status_code == 200
+                and (by_path.json().get("workspace") or {}).get("name") == "shopcv",
+                by_path.text[:300])
+
+        # Resolution stays a lookup, never a fuzzy match: an unlisted name is
+        # still refused, and the refusal still says what is addressable.
+        unknown = client.get("/templates", params={"workspace": "shopc"})
+        c.check("configured: a name that is not listed is still a 404",
+                unknown.status_code == 404, unknown.text[:300])
+        c.check("configured: and the refusal names what is",
+                "shopcv" in unknown.text and "testws" in unknown.text,
+                unknown.text[:300])
+    finally:
+        namespace["_configured_workspace_path"] = original
+        c.check("configured: the seam is back as it was",
+                namespace["_configured_workspace_path"] is original)
 
 
 def test_templates(c: _Checker, client) -> None:
@@ -479,6 +603,7 @@ def main() -> int:
         test_generate(c, client, home)
         test_generate_refuses(c, client, home)
         test_build(c, client, home)
+        test_configured_workspace(c, client, home)
     finally:
         if previous is None:
             os.environ.pop("HERMES_HOME", None)
