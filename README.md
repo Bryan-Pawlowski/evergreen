@@ -206,9 +206,12 @@ system font installation and no TeX distribution.
 
 The Hermes desktop app can show the Configurator as a pane docked on the right:
 pick a base template, set the knobs its `recipe.yaml` exposes, watch a schematic
-preview follow the values, generate a template directory in `templates.local/`,
-and build the PDF — with the real page count and overfull-box count coming back
-from tectonic.
+preview follow the values — your name and tagline, each section with its real
+heading and opening line, in the column the template puts it in, painted with
+the colours you chose — then generate a template directory in
+`templates.local/` and build the PDF, with the real page count and overfull-box
+count coming back from tectonic. The preview says it is a schematic: only a
+build shows the real page.
 
 It is the same feature the CLI and the HTTP door expose (`hermes career recipe`,
 `author`, `generate`, and `/api/plugins/evergreen/`), so none of them can drift

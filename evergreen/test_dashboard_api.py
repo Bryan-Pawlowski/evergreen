@@ -1,4 +1,4 @@
-"""The backend door: the Configurator's four routes, exercised for real.
+"""The backend door: the Configurator's five routes, exercised for real.
 
 M3 of ``CONFIGURATOR-PLAN.md`` is "the whole feature is reachable over HTTP,
 with no UI". This test is what makes that claim checkable without a gateway
@@ -176,8 +176,8 @@ def test_the_module_loads_like_hermes_loads_it(c: _Checker) -> None:
 
     router = _load_router()
     paths = sorted(getattr(route, "path", "") for route in router.routes)
-    c.check("module: it exposes a router with the four routes",
-            paths == ["/build", "/generate", "/templates", "/workspaces"], str(paths))
+    c.check("module: it exposes a router with the five routes",
+            paths == ["/build", "/generate", "/preview", "/templates", "/workspaces"], str(paths))
 
     # The genuine bootstrap check: a fresh interpreter, an unrelated cwd, and no
     # PYTHONPATH. The only way `from evergreen import ...` resolves is the
@@ -197,8 +197,8 @@ def test_the_module_loads_like_hermes_loads_it(c: _Checker) -> None:
     c.check("module: it imports with nothing but its own sys.path bootstrap",
             proc.returncode == 0,
             (proc.stderr or proc.stdout).strip()[-400:])
-    c.check("module: the standalone load finds all four routes",
-            proc.stdout.strip().endswith("4"), proc.stdout.strip()[-200:])
+    c.check("module: the standalone load finds all five routes",
+            proc.stdout.strip().endswith("5"), proc.stdout.strip()[-200:])
 
 
 def test_workspaces(c: _Checker, client) -> None:
@@ -579,6 +579,105 @@ def test_build(c: _Checker, client, home: Path) -> None:
             unknown.status_code == 404, unknown.text[:300])
 
 
+def test_preview(c: _Checker, client) -> None:
+    """GET /preview hands the sketch the profile's real headings and wording.
+
+    The sketch used to draw anonymous grey bars, which is honest but useless:
+    the user cannot tell a colour that failed from a colour that worked, and
+    cannot see which section the knob affects. This route is what makes the
+    drawing specific, so the checks here are about the *profile's* content
+    arriving, not about the route answering 200.
+    """
+    print("\n-- GET /preview --")
+    response = client.get("/preview", params={"template": "yaac", "workspace": "testws"})
+    c.check("preview: 200", response.status_code == 200, response.text[:600])
+    payload = response.json()
+
+    header = payload.get("header") or {}
+    c.check("preview: the header carries the profile's name",
+            header.get("name") == "Test Person", str(header.get("name")))
+    c.check("preview: the header carries the profile's tagline",
+            header.get("tagline") == "Software Engineer & Systems Builder",
+            str(header.get("tagline")))
+    c.check("preview: the header carries the contact line",
+            "test@example.com" in (header.get("contact") or []),
+            str(header.get("contact")))
+
+    sections = {section["slot"]: section for section in payload.get("sections") or []}
+    c.check("preview: identity is the header, not a section",
+            "identity" not in sections, str(sorted(sections)))
+    c.check("preview: every slot the template uses is a section",
+            set(sections) == {"summary", "skills", "experience", "projects",
+                              "education", "milestones", "languages"},
+            str(sorted(sections)))
+
+    experience = sections.get("experience") or {}
+    c.check("preview: a section carries the heading the dialect prints",
+            experience.get("title") == "Experience", str(experience.get("title")))
+    first = (experience.get("entries") or [{}])[0]
+    c.check("preview: an entry carries its headline from the profile",
+            first.get("headline") == "Senior Software Engineer", str(first.get("headline")))
+    c.check("preview: an entry carries where and when it was",
+            "Acme Corp" in str(first.get("meta")), str(first.get("meta")))
+    c.check("preview: an entry's opening line is its first bullet, markup stripped",
+            first.get("detail") == "Built a CUDA rendering pipeline that cut frame time 40%.",
+            str(first.get("detail")))
+
+    # A single-column template has nothing in the second column; this is what
+    # tells the sketch to draw one column rather than an empty right-hand side.
+    c.check("preview: a one-column template puts every section in the left column",
+            all(section["column"] == "left" for section in sections.values()),
+            str({slot: section["column"] for slot, section in sections.items()}))
+
+    # The two-column assignment is the template's own, and the templates that
+    # carry it are shipped, so this is checked against their real source.
+    from evergreen import discover_templates, slot_columns
+
+    shipped = {template.id: template for template in discover_templates(SHIPPED_TEMPLATES)}
+    altacv = slot_columns(shipped["altacv"])
+    minimal = slot_columns(shipped["minimal"])
+    c.check("slots: altacv puts experience and projects in the first column",
+            altacv == {"left": ["identity", "experience", "projects"],
+                       "right": ["skills", "milestones", "education", "languages"]},
+            str(altacv))
+    c.check("slots: minimal puts experience and projects in the second column",
+            minimal["right"] == ["experience", "projects"]
+            and minimal["left"][:2] == ["identity", "links"],
+            str(minimal))
+    c.check("slots: a one-column template has no right column",
+            slot_columns(shipped["yaac"])["right"] == [],
+            str(slot_columns(shipped["yaac"])))
+
+    unknown = client.get("/preview", params={"template": "nosuch", "workspace": "testws"})
+    c.check("preview: an unknown template is a 404 naming the real ones",
+            unknown.status_code == 404 and "nosuch" in unknown.text,
+            unknown.text[:300])
+
+    missing = client.get("/preview", params={"template": "yaac", "workspace": "nosuch"})
+    c.check("preview: an unknown workspace is a 404",
+            missing.status_code == 404, missing.text[:300])
+
+    # A workspace whose profile parses but does not validate is still a
+    # workspace the door will address. The sketch must not blow up on it: it
+    # falls back to placeholder lines and says why. (A file that does not parse
+    # at all is not a workspace — `Workspace.exists` refuses it — so the case
+    # that can actually reach this route is an invalid profile, not a broken
+    # one.)
+    broken_home = Path(tempfile.mkdtemp(prefix="evergreen-api-broken-"))
+    atexit.register(shutil.rmtree, str(broken_home), True)
+    broken = Workspace(broken_home)
+    broken.create()
+    (broken.root / "career.yaml").write_text(
+        "schema_version: 1\nperson:\n  name: {}\n", encoding="utf-8"
+    )
+    degraded = client.get("/preview", params={"template": "yaac", "workspace": str(broken.root)})
+    c.check("preview: an unreadable profile degrades to placeholders, saying why",
+            degraded.status_code == 200
+            and bool(degraded.json().get("wording_error"))
+            and (degraded.json().get("sections") or []) != [],
+            degraded.text[:400])
+
+
 def main() -> int:
     c = _Checker()
     home = _hermes_home()
@@ -602,6 +701,7 @@ def main() -> int:
         test_templates(c, client)
         test_generate(c, client, home)
         test_generate_refuses(c, client, home)
+        test_preview(c, client)
         test_build(c, client, home)
         test_configured_workspace(c, client, home)
     finally:
