@@ -1,7 +1,13 @@
 # Evergreen — remaining work
 
-Status as of 2026-10-22. The plugin is built, installed, and green; this is
+Status as of 2026-10-23. The plugin is built, installed, and green; this is
 what is left before it is genuinely shippable.
+
+The **Template Configurator** (the recipe seam, the generator, the HTTP door, the
+desktop pane, and the distribution) is tracked in
+[`CONFIGURATOR-PLAN.md`](CONFIGURATOR-PLAN.md) — M1–M5, done and merged to
+`main`/`stable`. This file does not repeat it; only the catalog listing is still
+open, and it is the same item here as it is there.
 
 Legend: ☐ not started · ◐ in progress · ☑ done & verified
 
@@ -53,13 +59,17 @@ These forks were decided and are no longer open:
 - ☑ **Added `templates/minimal/LICENSE.md`** — a note pointing at
   `templates/LICENSE-FONTS.md` (the minimal template uses no third-party
   class, only the vendored fonts).
-- ☐ **Run `hermes plugins validate` at release time** — the authoritative
-  gate, against the local Hermes 0.22.3. It passes today; CI uses the
-  self-contained subset instead because the PyPI Hermes is too old to
-  have it.
-- ☐ **Submit to the plugin catalog** — a PR to
+- ☑ **Run `hermes plugins validate` at release time** — the authoritative
+  gate, against the local Hermes 0.22.3. CI uses the self-contained subset
+  instead because the PyPI Hermes is too old to have it — and the authoritative
+  run has now happened against the desktop half too (M4 of
+  `CONFIGURATOR-PLAN.md`: `✓ desktop surface — stays inside the plugin SDK
+  surface`), so this is no longer an open item.
+- ◐ **Submit to the plugin catalog** — a PR to
   `NousResearch/hermes-agent` adding `plugin-catalog/evergreen.yaml` with
-  the reviewed commit SHA. Until then, install is by git URL only.
+  the reviewed commit SHA. Until it merges, install is by git URL only. The
+  entry is pinned to the `stable` commit, because that is the branch
+  `hermes plugins install` follows.
 
 ## 2. Fix a wrong claim in the existing Evergreen skill
 
@@ -188,9 +198,12 @@ These forks were decided and are no longer open:
   and its model pointed at `ollama-cloud`; recreate it with
   `hermes profile create egtest --clone --no-alias` if it is ever lost.
   Delete it with `hermes profile delete egtest -y`.
-- ☐ **Plugin catalog submission**: a PR to
+- ◐ **Plugin catalog submission**: a PR to
   `NousResearch/hermes-agent` adding `plugin-catalog/evergreen.yaml` with
-  the reviewed commit SHA. Until then, install is by git URL only.
+  the reviewed commit SHA. Until it merges, install is by git URL only.
+  Pinned to the `stable` commit; the entry's `capabilities` must match what the
+  plugin registers and its `requires_hermes` must stay truthful (their catalog
+  README's admission rules are the checklist).
 - ☐ **A worked example**: a small `examples/` directory with a scrubbed
   career profile and the PDF it produces, so a stranger can see the output
   without setting anything up. This is the "scrubbed example workspace"

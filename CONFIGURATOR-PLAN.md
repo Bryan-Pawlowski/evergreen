@@ -4,9 +4,10 @@ An interactive HTML Configurator, usable in the Hermes desktop app, that turns a
 set of structured settings into a **new LaTeX template directory** in a career
 workspace's `templates.local/`.
 
-Status: in progress on `feature/template-configurator`. **M1, M2, M3 and M4 are
-done**; M5 (distribution) is not.
-Draft PR: <https://github.com/Bryan-Pawlowski/evergreen/pull/1>.
+Status: **done**. M1–M5 shipped on `feature/template-configurator`, merged to
+`main` and `stable`. The catalog listing is the one step that lives outside this
+repository.
+PR: <https://github.com/Bryan-Pawlowski/evergreen/pull/1>.
 
 ---
 
@@ -539,6 +540,7 @@ and can be regenerated.
 ├── template.yaml      # new id/name/description; copies the base's dialect,
 │                      # engine, class_files, fontconfig, fonts_dir, assets_dir
 ├── cv.tex             # base cv.tex with the settings region replaced
+├── recipe.yaml        # the base's recipe, re-pointed at this cv.tex (M5)
 ├── settings.yaml      # what was chosen, and from which base
 ├── <base>.cls         # copied from the base template
 ├── fonts/  fonts.conf # copied from the base template
@@ -549,6 +551,21 @@ The class, fonts, and assets are **copied, not referenced**: the template
 contract has no notion of inheritance, and `stage()` already copies these
 directories next to the build. The cost is disk — the vendored fonts are a few
 MB per template — and that cost is called out rather than hidden.
+
+**`recipe.yaml` was added in M5** (the open question §4 M3 left behind). A
+generated template's lines are its own, so the recipe that names them belongs
+to it too: the base's recipe is written alongside with its `id` rewritten to
+the new template and each knob's `default` rewritten to the value applied. A
+generated template is then a base in its own right — re-open it in the
+Configurator and it offers the same knobs, starting where it was left — and
+generation composes: generating from a generated template reaches the same
+LaTeX as applying both sets of settings to the original base at once.
+
+The carried recipe is verified against the generated source **before the
+directory is created** (every knob must still match exactly once), because
+`apply_settings` substitutes each pattern in turn: with two knobs on one line
+the first rewrite swallows the second knob's pattern and the second would
+silently apply nothing. That is a loud error now, and a refusal writes nothing.
 
 ### 3.5 The preview
 
@@ -947,27 +964,63 @@ rather than saying "enable the plugin". The lint's forbidden-pattern list is
 easy to trip by accident, and it is deliberately stricter than upstream on
 prototype writes; the teeth test means a new rule cannot ship inert.
 
-**Still open from M3, and deliberately not decided here:** a generated template
-carries `settings.yaml` and not the recipe that made it, so re-opening one in the
-Configurator offers no knobs. Copying the base's recipe into the generated
-directory (with its `id` rewritten) would make a generated template itself
-configurable and would change M2's artifact — so it belongs to M5, with the rest
-of the distribution decisions.
+**Left open by M3, closed by M5:** a generated template carried `settings.yaml`
+and not the recipe that made it, so re-opening one in the Configurator offered
+no knobs. **Decided in M5: the base's recipe is copied into the generated
+directory**, with its `id` rewritten to the new template and each applied knob's
+`default` rewritten to the value written into `cv.tex`. A generated template is
+therefore configurable again, and generation composes (§3.4, §5).
 
 ### M5 — Distribution and documentation
 
 *Goal: the feature ships.*
 
-- Merge to `main`, then `stable`, with the GitHub run all green.
-- `templates/README.md` gains the recipe contract (which is what shipped in
-  M1); the `evergreen-cvcraft` skill gains the same, so an agent editing a
-  template knows the recipe exists and that a recipe must match exactly once.
-- A catalog PR to `NousResearch/hermes-agent` adding
-  `plugin-catalog/evergreen.yaml` with the reviewed commit SHA.
-- The `TASKS.md` entry that points here, and the removal of the "run
-  `hermes plugins validate` at release time" item once the desktop lint is in
-  CI and the authoritative validator has actually been run against the new
-  desktop half.
+**Status: done**, with the catalog listing as the one step that lands outside
+this repository.
+
+**The last open question, settled.** A generated template now carries the base's
+`recipe.yaml`, rewritten onto its own `cv.tex` (§3.4). The cost was the reason it
+waited: it changes M2's artifact. The benefit is that a generated template is a
+base rather than a dead end, and that generation composes. The verification is
+the part that makes it safe — the carried recipe is checked against the
+generated source before anything is written, so a knob whose pattern another
+knob's rewrite swallowed is a loud error instead of a control that does nothing.
+
+**What shipped, and how each was proved:**
+
+- **The recipe travels with a generated template.** `generate_template` copies
+  the base's recipe with a new `id`, new `name`, and each applied knob's
+  `default` set to the value written into `cv.tex`; `POST /generate` reports it
+  as `paths.recipe`. Proved in `evergreen.test_recipe`: the carried recipe names
+  the new template, starts at the chosen values, is a no-op at its defaults,
+  two generations compose to one, and a swallowing rewrite is refused **and
+  writes nothing**. Proved again at the door in `evergreen.test_dashboard_api`:
+  the generated template is offered as a base and generating from it keeps the
+  first pass's settings.
+- **The docs carry the contract.** `templates/README.md` gained "A generated
+  template carries its recipe"; `skills/evergreen-cvcraft/SKILL.md` gained the
+  generate section plus the two things to know before hand-editing a generated
+  template; `README.md` says a generated template is configurable. The recipe
+  contract itself had landed with M1/M2.
+- **`TASKS.md`** points at this plan and its two distribution items are ticked
+  in place.
+- **`hermes plugins validate .` was run against the desktop half** (the
+  authoritative gate, recorded in §4 M4), so the "run it at release time"
+  condition is discharged — and the item is struck from `TASKS.md` rather than
+  left as folklore.
+- **Merge to `main`, then `stable`**, each with the GitHub run green on the
+  merged commit. `stable` is the distribution branch `hermes plugins install`
+  follows, so it must contain exactly what `main` contains.
+- **Catalog PR to `NousResearch/hermes-agent`** adding
+  `plugin-catalog/evergreen.yaml`, pinned to the merged `stable` SHA. Their
+  admission rules (§2, §6, §14 of their catalog README) are what the entry has
+  to satisfy: a full 40-character SHA, `capabilities` matching what the plugin
+  registers, `requires_hermes` truthful and not newer than the current release,
+  and an owner-authored submission.
+
+*Done when:* `main` and `stable` are merged and green, the catalog entry is pinned
+to the `stable` commit, and every claim above is read back from GitHub rather
+than from a local run.
 
 ---
 
@@ -1002,6 +1055,22 @@ lines in a real template, so it belongs to whoever owns that template — the
 plugin's job is to make the choice possible, not to make it. The repo's own
 tests therefore derive a recipe at run time, with the same engine the
 Configurator uses, and take it all the way to a compiled PDF.
+
+**A generated template owns the recipe it was built with.** Generation copies
+the base's `recipe.yaml` into the new directory, with the `id` rewritten to the
+new template and each applied knob's `default` rewritten to the value written
+into `cv.tex`. The premise is the one above: a recipe names real lines in a real
+template, and after generation those lines belong to the generated template. The
+payoff is that a generated template is a base in its own right — re-open it and
+it offers the same knobs where it was left — and that generation composes to the
+same LaTeX as one pass with both settings. *Rejected:* leaving generation
+one-shot with `settings.yaml` as the only record, which made a generated
+template a dead end: the Configurator could show what had been chosen but not
+change it. The reason it waited for M5 is that it changes M2's artifact, and the
+reason it is safe is the check: the carried recipe is verified against the
+generated source before the directory is created, so a knob whose pattern
+another knob's rewrite swallowed fails loudly instead of shipping a control
+that does nothing.
 
 **The generator proposes; the render disposes.** The recipe generator reads
 the template, its class, and its dialect, and proposes the settings the

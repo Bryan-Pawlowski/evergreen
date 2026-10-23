@@ -214,6 +214,12 @@ carries a `recipe.yaml`, and the shipped templates deliberately carry none. Auth
 one with `hermes career author <template> --path <template dir>`: it proposes,
 proves each setting with a render, and writes only what survived.
 
+**A generated template is configurable too.** The base's recipe travels into the
+new directory, re-pointed at the new `cv.tex`, with each knob starting from the
+value it was built with — so `wide` can be re-opened as a base and tweaked again,
+and generating from a generated template reaches the same LaTeX as applying both
+sets of settings at once.
+
 **Working on the pane.** The app loads a *copy* at
 `~/.hermes/desktop-plugins/evergreen/plugin.js`, refreshed by Rescan, an
 install/update, or a restart — editing `plugins/evergreen/desktop/plugin.js` in
