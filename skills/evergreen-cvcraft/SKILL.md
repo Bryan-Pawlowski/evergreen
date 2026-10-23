@@ -224,6 +224,30 @@ with a real render, and writes the recipe with the settings that survived
 — a setting that changes nothing is left out, because a control that
 does nothing is worse than no control. Read it, edit it, and it is yours.
 
+### Generating a template from a base
+
+```
+hermes career generate --base <template-with-a-recipe> --id <new-id>
+```
+
+writes `templates.local/<new-id>/`: the base's `cv.tex` with the settings
+rewritten, the base's class/fonts/assets copied, a `settings.yaml` naming
+what was chosen, and — since the Configurator shipped — **the base's
+`recipe.yaml`, re-pointed at the new file**: its `id` becomes the new
+template and each chosen knob's `default` becomes the value applied.
+
+Two consequences worth knowing before editing one by hand:
+
+- A generated template is configurable again, not a dead end. Its recipe's
+  patterns match **its** `cv.tex`, so if you edit that file, the same
+  drift rule applies: update the pattern or delete the recipe.
+- Generation composes: generating from a generated template reaches the
+  same LaTeX as applying both sets of settings to the original base at
+  once. The generator verifies the carried recipe against the new source
+  before writing anything, so a recipe whose knobs collide (two knobs on
+  one line, where the first rewrite swallows the second pattern) fails
+  loudly instead of shipping a control that does nothing.
+
 Full contract: `templates/README.md`.
 
 ## Developing against a running gateway
