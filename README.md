@@ -232,6 +232,32 @@ validation, the matcher, slot rendering, and a real tectonic compile of
 every shipped template (asserting the PDF exists, has a page count, and has
 no overfull boxes).
 
+### The PDF text-layer checks
+
+Two checks go deeper than the selftest: they read the compiled PDF's *text
+layer* to prove the content actually reached the page.
+
+```bash
+python scripts/check_render_parity.py          # every shipped template
+python scripts/check_generated_parity.py       # a generated template
+python scripts/test_render_parity_teeth.py     # prove the check can fail
+```
+
+These need a **PDF text extractor**, which is not part of the plugin's
+runtime requirements — the plugin itself never reads a PDF back. Install
+either one:
+
+```bash
+pip install pymupdf          # preferred; pure wheel, no system install
+```
+
+or poppler's `pdftotext` (`apt install poppler-utils`, `brew install
+poppler`, `choco install poppler`).
+
+Without one, the checks exit **2** and say so, rather than reporting every
+template as missing all of its content. A missing dependency is an
+environment problem, not a broken template.
+
 **Branch model.** `main` is the development branch; `stable` is the release
 channel (the repository's default branch, which is what
 `hermes plugins install` checks out). Development happens on `main` with

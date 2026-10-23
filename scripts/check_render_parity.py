@@ -38,8 +38,9 @@ Usage:
     python scripts/check_render_parity.py minimal    # one, by id
 
 Exit code 0 = every template's declared content is present. 1 = a build
-failed or content is missing. 2 = tectonic is not installed (a real
-failure: we cannot prove the PDF without it).
+failed or content is missing. 2 = the environment cannot run the check
+(tectonic is not installed, or no PDF text extractor is installed --
+both are missing dependencies, not broken templates).
 """
 from __future__ import annotations
 
@@ -157,9 +158,40 @@ def _claims(content: dict) -> dict[str, list]:
     return out
 
 
+class NoTextExtractor(RuntimeError):
+    """No PDF text extractor is available on this machine.
+
+    This is an *environment* problem, not a content problem. The check
+    cannot read any PDF's text layer, so it must not report the declared
+    content as missing -- that blames the template for a missing
+    dependency. It is the same class of failure as tectonic being
+    absent, and it gets the same exit code.
+    """
+
+
+def _extractor_name() -> str | None:
+    """The name of an available PDF text extractor, or None.
+
+    poppler's ``pdftotext`` is preferred; pymupdf is the fallback. Either
+    one is enough -- the job works on a runner with only one of the two.
+    """
+    if shutil.which("pdftotext"):
+        return "pdftotext"
+    try:
+        import pymupdf  # noqa: F401
+    except ImportError:
+        return None
+    return "pymupdf"
+
+
 def _read_text_layer(pdf: Path) -> str:
-    """Read a PDF's text layer. poppler's pdftotext first, pymupdf as a
-    fallback so the job works on any runner that has one of the two."""
+    """Read a PDF's text layer.
+
+    Raises :class:`NoTextExtractor` when no extractor is installed. The
+    alternative -- returning an empty string -- would be a lie: the
+    check would then report every declared claim as missing and blame
+    the template for a dependency the machine does not have.
+    """
     if shutil.which("pdftotext"):
         proc = subprocess.run(
             ["pdftotext", str(pdf), "-"],
@@ -169,10 +201,12 @@ def _read_text_layer(pdf: Path) -> str:
             return proc.stdout
     try:
         import pymupdf
-        doc = pymupdf.open(str(pdf))
-        return "\n".join(page.get_text() for page in doc)
-    except Exception as exc:  # pragma: no cover - depends on the runner
-        return f"<no text layer could be read: {exc}>"
+    except ImportError as exc:
+        raise NoTextExtractor(
+            "no PDF text extractor is installed"
+        ) from exc
+    doc = pymupdf.open(str(pdf))
+    return "\n".join(page.get_text() for page in doc)
 
 
 def _declared_slots(template) -> set[str]:
@@ -230,7 +264,15 @@ def _check_template(template, claims: dict[str, list], tmp: Path,
         out_dir.mkdir(parents=True, exist_ok=True)
         shutil.copy2(result.pdf, out_dir / f"{template.id}.pdf")
 
-    text = _read_text_layer(result.pdf)
+    try:
+        text = _read_text_layer(result.pdf)
+    except NoTextExtractor:
+        # Not a content finding -- the machine cannot read text layers at
+        # all. Let it propagate so the caller reports an environment
+        # problem instead of blaming the template.
+        raise
+    except Exception as exc:  # pragma: no cover - depends on the runner
+        return [f"could not read the PDF's text layer: {exc}"]
     if not text.strip():
         return ["PDF has no readable text layer (empty extraction)"]
 
@@ -292,14 +334,34 @@ def main() -> int:
         print("      (In CI it is installed in the step before this one.)")
         return 2
 
+    # The text layer is the whole point of this check, so an absent
+    # extractor is an environment failure, not a content failure. It is
+    # checked up front, before any PDF is built, so the failure is
+    # unambiguous and fast.
+    extractor = _extractor_name()
+    if extractor is None:
+        print("FAIL: no PDF text extractor is installed; cannot read the "
+              "PDFs' text layers.")
+        print("      Install one:  pip install pymupdf")
+        print("      (or poppler's pdftotext -- in CI it is installed in the "
+              "step before this one.)")
+        return 2
+
     print(f"render-parity: {len(templates)} template(s): "
           f"{sorted(t.id for t in templates)}")
+    print(f"render-parity: text extractor: {extractor}")
 
     failed: dict[str, list[str]] = {}
     with tempfile.TemporaryDirectory() as tmpdir:
         tmp = Path(tmpdir)
         for template in templates:
-            findings = _check_template(template, claims, tmp, out_dir=out_dir)
+            try:
+                findings = _check_template(template, claims, tmp, out_dir=out_dir)
+            except NoTextExtractor:
+                # The extractor vanished mid-run (or was never really
+                # usable). Report the environment, not the template.
+                print("FAIL: the PDF text extractor became unavailable.")
+                return 2
             if findings:
                 failed[template.id] = findings
                 print(f"  [{template.id}] FAIL ({len(findings)}):")
