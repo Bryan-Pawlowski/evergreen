@@ -4,8 +4,8 @@ An interactive HTML Configurator, usable in the Hermes desktop app, that turns a
 set of structured settings into a **new LaTeX template directory** in a career
 workspace's `templates.local/`.
 
-Status: in progress on `feature/template-configurator`. **M1, M2 and M3 are
-done**; M4 (the desktop pane) and M5 (distribution) are not.
+Status: in progress on `feature/template-configurator`. **M1, M2, M3 and M4 are
+done**; M5 (distribution) is not.
 Draft PR: <https://github.com/Bryan-Pawlowski/evergreen/pull/1>.
 
 ---
@@ -687,10 +687,10 @@ seam; the workspace holds the taste.
   in the active workspace, with three settings, each proved live.
 
 *What is not done, and is M3+:* the desktop pane and the distribution. (The
-backend door shipped in M3.) The desktop-surface lint (`scripts/`, mirroring the
-subset of `plugin_validate_desktop.py` that CI can run without a new Hermes) is
-still outstanding, and it belongs with M4, where `desktop/plugin.js` first
-exists to be linted.
+backend door shipped in M3.) The desktop-surface lint (`scripts/
+check_desktop_plugin.py`, mirroring the subset of `plugin_validate_desktop.py`
+that CI can run without a new Hermes) shipped in M4 with the desktop half it
+guards.
 
 *Done when:* all four bases generate, compile, pass parity, and the CLI
 produces a template the existing `career_build` renders. Every knob of
@@ -843,28 +843,101 @@ served process found `~/.local/bin/tectonic.EXE` and built in 1.5 s.
 
 *Goal: the Configurator, usable in the Hermes desktop app.*
 
-- `desktop/plugin.js` — a pane (docked right, ~420px) and a ⌘K command.
-  The form is built from the recipe JSON; the schematic preview is drawn
-  client-side; "Generate" and "Build PDF" call `ctx.rest`.
-- Written entirely inside the SDK surface: `jsx()` calls, not JSX; only
-  `@hermes/plugin-sdk`, `react`, `react/jsx-runtime` imported; no `eval`, no
-  dynamic import, no app-DOM reach.
-- The pane ships **disabled by default** and the plan includes the
-  "Capabilities → Plugins → toggle" step in the user-facing instructions.
-- Dev loop: the desktop half is loaded from a *copy* at
-  `desktop-plugins/<id>/`, refreshed only on Rescan, an install/update through
-  the app, or a restart. Editing the source in place does nothing on screen.
-  A **linked checkout** (`ln -s <repo> ~/.hermes/plugins/evergreen`) makes
-  every save re-sync and hot-reload. On Windows that needs developer mode or
-  admin for the symlink; the fallback is to copy the file and press Rescan.
+**Status: done.** What shipped:
+
+- `desktop/plugin.js` — one pane (`placement: 'right'`, `width: '420px'`) and
+  one ⌘K command that reveals it (`host.revealPane('evergreen:configurator')`,
+  feature-detected). The file is plain ESM with `jsx()` calls, because the disk
+  door loads it uncompiled.
+- **The form is generated from the recipe JSON.** `GET /templates` returns each
+  base's knobs, and the pane renders one control per knob family — a swatch plus
+  a hex field for `color`, a segmented control for `enum` (with `min`/`max` on
+  the number field, a length hint on the length field). Adding a knob to a
+  recipe needs no change here, which is the point of the seam.
+- **The workspace is chosen, never guessed** — the M3 finding, closed. The pane
+  offers the names `GET /workspaces` reports *and* a free-text field, because a
+  workspace outside the Hermes home (this machine's own `templates.local` tree)
+  has no name to offer. The value is remembered.
+- **The schematic preview is drawn client-side** from the values: a page
+  rectangle at the chosen `*ratio*` knob's split (or one column), a swatch per
+  colour knob, a proportional bar per size knob, and the template's slots. It is
+  labelled "Schematic, not a render" in the pane, because the truthful answer is
+  the build.
+- **Generate and Build PDF call `ctx.rest`** with the door's own shapes —
+  `{base, id, name, workspace, settings}` and `{template, workspace}` — and the
+  build gets a 180 s timeout, since a tectonic compile is seconds to a minute.
+  The answer renders as what a person needs: the id, the resolved LaTeX per knob
+  (`changed` marking their own choices), the page count, the overfull-box count,
+  and a Reveal button.
+- **The form survives a round trip.** Workspace, base, every value, the id, the
+  name and the last generated template are persisted through `ctx.storage`, so a
+  pane close, a reload, or a hot edit reopens on what was typed rather than on
+  the template's defaults.
+- **The half ships opt-in** (`defaultEnabled: false`): it inventories in
+  Capabilities → Plugins and changes nothing on any surface until the user flips
+  the switch.
+- `scripts/check_desktop_plugin.py` — the desktop-surface lint (a self-contained
+  port of `hermes_cli/plugin_validate_desktop.py`, which CI cannot run), plus
+  the package contract, plus a syntax check. Its best check is the one no
+  manifest can do: **every `ctx.rest()` path must be a route in
+  `dashboard/plugin_api.py`, with the method the pane sends**, so the pane and
+  the door cannot drift apart in different languages. `node --check` on a copy
+  named `.mjs` parses it as an ES module, so JSX syntax fails in CI rather than
+  as a load toast.
+- `scripts/test_desktop_lint_teeth.py` — 12 surface constructs, 10 contract
+  mutations of the real file, and a JSX sample, each asserted to be rejected.
+
+**How it was proved, and what is not proved.** The pane was mounted and driven
+for real under jsdom with the app's own React 19: 33 checks covering the module's
+shape, both contributions, the recipe-derived form, a typed id and a changed
+colour, the exact `/generate` and `/build` request bodies, the rendered answers,
+the palette command, and the persisted form. The two request bodies it sends are
+the same ones M3 measured against a live `hermes serve`. **The app itself was not
+driven**: the half is copied into `desktop-plugins/<id>/` only on a Rescan,
+install or start, and it ships disabled, so the pane appears when a person
+enables it — that step is in the README rather than automated.
+
+**Two traps worth recording, both found by mounting it:**
+
+- **`jsx()` and `jsxs()` differ in whether children arrays are validated.**
+  React's dev runtime validates the children of a `jsxs` call (marking each
+  element `_store.validated`) and does not validate those of a `jsx` call. So a
+  *single*-child `jsx` whose `children` happens to be an array of unkeyed
+  elements warns "Each child in a list should have a unique key" — and the
+  warning is deduped per component, so it names the component, not the line. Two
+  such sites existed; both were found by reading `console.error` while the pane
+  mounted, not by looking at the code. The pane rendered fine either way, which
+  is exactly why it matters: a cosmetic warning is console noise that hides the
+  next real one.
+- **The UI kit's prop names are not guessable.** `Badge` has no `secondary`
+  variant in this app (the tones are `default`, `muted`, `success`, `warn`,
+  `destructive`, `outline`, `solid`), and a wrong variant is a silently
+  unstyled badge, not an error. Read `components/ui/<name>.tsx` before using a
+  component; the SDK page lists what exists, not what each one accepts.
+- **The dev loop still applies.** The app loads the *copy* at
+  `desktop-plugins/<id>/`, refreshed by Rescan / install / start — editing
+  `plugins/evergreen/desktop/plugin.js` in place does nothing on screen. A
+  linked checkout re-syncs on every save; without one, edit, then Rescan.
 
 *Done when:* the pane appears after a reload, no error toast is shown, a
 generated template lands on disk, "Build PDF" returns a PDF with the expected
-page count, and the settings survive a round trip through the form.
+page count, and the settings survive a round trip through the form. **Met for
+everything except "the pane appears"**, which is the user's toggle (below); the
+generated-template and build halves are M3's live measurements, and the round
+trip is the persistence check above.
 
-*Risks:* the desktop half's opt-in toggle is a step the user must take and
-will be forgotten; the desktop lint's forbidden-pattern list is easy to trip
-over accidentally with a dynamic import or an `innerHTML` write.
+*Risks:* the opt-in toggle is a step the user must take and will be forgotten —
+hence the README instruction, which names the panel ("Capabilities → Plugins")
+rather than saying "enable the plugin". The lint's forbidden-pattern list is
+easy to trip by accident, and it is deliberately stricter than upstream on
+prototype writes; the teeth test means a new rule cannot ship inert.
+
+**Still open from M3, and deliberately not decided here:** a generated template
+carries `settings.yaml` and not the recipe that made it, so re-opening one in the
+Configurator offers no knobs. Copying the base's recipe into the generated
+directory (with its `id` rewritten) would make a generated template itself
+configurable and would change M2's artifact — so it belongs to M5, with the rest
+of the distribution decisions.
 
 ### M5 — Distribution and documentation
 

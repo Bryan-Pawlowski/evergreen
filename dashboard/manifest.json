@@ -3,7 +3,7 @@
   "label": "Evergreen",
   "description": "Configure a CV template: pick a base, set its knobs, generate a template directory in the workspace, then build the PDF.",
   "icon": "FileText",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "tab": {
     "hidden": true
   },
