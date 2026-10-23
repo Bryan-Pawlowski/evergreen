@@ -79,6 +79,24 @@ jobs:
       - name: Check the plugin manifest
         run: python scripts/check_manifest.py
 
+      # The desktop half runs in the renderer realm with the app's full
+      # authority — the loader gives error isolation, not a capability
+      # boundary — so its surface is linted rather than trusted: no prototype
+      # patching, no eval, no dynamic or remote import, no script injection, no
+      # app-DOM reach. Plus the contract that only breaks in the field: the id
+      # must be plugin.yaml's name, the half must ship opt-in, the pane and the
+      # palette command must exist, and every ctx.rest() path must be a route in
+      # dashboard/plugin_api.py. The syntax step parses it as an ES module, so
+      # JSX (which the disk door cannot load) fails here. `hermes plugins
+      # validate` is the authoritative version of this lint; see the script's
+      # docstring for why CI cannot run it.
+      - name: Check the desktop half (SDK surface, contract, syntax)
+        run: python scripts/check_desktop_plugin.py
+
+      # A gate that cannot fail is not a gate: prove each rule bites.
+      - name: The desktop gate must reject what it forbids
+        run: python scripts/test_desktop_lint_teeth.py
+
       - name: Check for leaked personal data
         run: python scripts/check_no_user_data.py
 
