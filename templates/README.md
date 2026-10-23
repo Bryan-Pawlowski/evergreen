@@ -148,6 +148,12 @@ template: `emergencystretch` is a real LaTeX setting that the generator
 proposes without complaint, and that no ordinary content makes visible —
 so it is left out.
 
+The check compares rendered **pixels**, so it needs PyMuPDF. Without PyMuPDF
+installed, authoring does not fail: it writes the recipe with every proposal
+and says `"proven": false` and why. A recipe written that way is a draft, not a
+proved one — `pip install pymupdf` and re-run `author --overwrite` before
+trusting it.
+
 ## Dialects
 
 A **dialect** knows how to emit LaTeX for each slot. It is the only part of

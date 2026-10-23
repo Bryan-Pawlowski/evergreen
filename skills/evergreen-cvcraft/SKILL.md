@@ -224,6 +224,11 @@ with a real render, and writes the recipe with the settings that survived
 — a setting that changes nothing is left out, because a control that
 does nothing is worse than no control. Read it, edit it, and it is yours.
 
+The proof compares rendered pixels, so it needs **PyMuPDF** installed for the
+interpreter that runs the plugin. Without it the command does not fail: it
+writes the recipe with every proposal and reports `"proven": false` plus
+`"why"`. Treat that output as a draft, not a proved recipe.
+
 ### Generating a template from a base
 
 ```

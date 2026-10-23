@@ -1020,6 +1020,39 @@ knob's rewrite swallowed is a loud error instead of a control that does nothing.
   `NousResearch/hermes-agent` under a personal account. Revisit only if
   discovery by name becomes worth that. See §5.
 
+**A real install was driven before `stable`, not after.** The milestone list
+says "merge, then stable" — but the thing being promoted is what a *consumer*
+gets, not what a checkout does, so `main` was installed into a separate profile
+(`hermes -p egtest plugins install Bryan-Pawlowski/evergreen --ref
+adacbb32…` — the 40-character main tip) and driven through the plugin's own CLI:
+
+| step | result |
+|---|---|
+| `plugins validate .` on the installed copy | passed — the authoritative gate, plus `desktop surface` and `no core override` |
+| `plugins doctor evergreen --ci` | 8 tools, 0 hooks, registration OK |
+| `career init` / `career build --template yaac` | 1 page, 0 overfull boxes, a real PDF |
+| `career recipe localplain` | 5 knobs proposed from a workspace-local copy |
+| `career author localplain --path …` | wrote `recipe.yaml` (**`"proven": false`** — see the finding below) |
+| `career generate --base localplain --id localwide --set margin=1in --set base_size=12pt` | carried `recipe.yaml` with `id: 'localwide'` and both defaults rewritten |
+| `career build --template localwide` | 1 page, 0 overfull boxes |
+| `career generate --base localwide --id localwide2 --set margin=1.25in` | succeeded; `localwide2/cv.tex` is **byte-identical** to applying `base_size=12pt, margin=1.25in` to the base in one pass, and its recipe is a no-op at its own defaults |
+| `career build --template localwide2` | 1 page, 0 overfull boxes |
+
+That is M1–M5 through the installed plugin, including the M5 change this
+document was written for.
+
+**The finding that test produced: authoring silently degrades without
+PyMuPDF.** The per-knob proof compares rendered pixels, and PyMuPDF is not a
+declared dependency — on a stock install `hermes career author` writes the
+recipe with **every** proposal and reports `"proven": false`,
+`"why": "pymupdf is not installed"`. The output is honest, but the README and
+the skill promised a proved recipe and never said what to install. Fixed as
+documentation rather than by declaring the dependency: PyMuPDF is a ~20 MB wheel
+that exactly one command needs, and making every user consent to it on install
+to render a CV is the wrong trade. `README.md`, `templates/README.md` and the
+`evergreen-cvcraft` skill now name the dependency and say what an unproven
+recipe is (a draft).
+
 *Done when:* `main` and `stable` are merged and green and every claim above is
 read back from GitHub rather than from a local run. A catalog entry is not part
 of the definition of done.
