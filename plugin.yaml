@@ -17,4 +17,5 @@ provides_tools:
   - career_match
   - career_build
   - career_templates
+  - career_configure
 requires_hermes: ">=0.22.0"

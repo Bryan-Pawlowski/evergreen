@@ -203,7 +203,17 @@ class Knob:
         A colour loses its ``#`` and gains an uppercase hex, because that
         is what ``\\definecolor{..}{HTML}{..}`` wants. Everything else is
         the value as the user gave it.
+
+        **The default is used verbatim.** The default is the text the
+        template already has, so rewriting it into a canonical form
+        would change the source for no reason: ``0.50`` in the template
+        would become ``0.5``, and the recipe would then no longer match
+        the template it was written for -- the drift check would fire
+        against a template nobody had touched.
         """
+        if str(value) == str(self.default):
+            return str(self.default)
+
         if self.type == "color":
             text = str(value).strip()
             match = _HEX_RE.match(text)
@@ -340,6 +350,107 @@ def has_recipe(directory: Path) -> bool:
     """Whether a template directory carries a recipe."""
     directory = Path(directory)
     return (directory / RECIPE_FILENAME).exists() or (directory / "recipe.yml").exists()
+
+
+def write_recipe(directory: Path, data: dict, *, overwrite: bool = False) -> Path:
+    """Write a recipe into a template directory.
+
+    The recipe is written as YAML a person can read and edit -- it is a
+    source file, not a build artefact -- so the comment header is
+    preserved and the knobs are written in the order they were proposed.
+
+    An existing recipe is not overwritten by accident: a recipe is
+    hand-edited work, and losing it to a re-run of the generator would
+    be a nasty surprise. Pass ``overwrite=True`` to replace it on
+    purpose.
+    """
+    directory = Path(directory)
+    path = directory / RECIPE_FILENAME
+    if path.exists() and not overwrite:
+        raise RecipeError(
+            f"{path} already exists. It is a hand-edited file, so it is "
+            f"not overwritten; pass overwrite=True to replace it."
+        )
+
+    errors = validate_recipe(data)
+    if errors:
+        detail = "; ".join(errors[:5])
+        raise RecipeError(f"The recipe is not valid: {detail}")
+
+    directory.mkdir(parents=True, exist_ok=True)
+    text = _recipe_to_yaml(data)
+    path.write_text(text, encoding="utf-8", newline="\n")
+    return path
+
+
+def _recipe_to_yaml(data: dict) -> str:
+    """A recipe as readable YAML, with a header explaining the format."""
+    header = (
+        "# The settings this template exposes.\n"
+        "#\n"
+        "# A recipe POINTS AT the lines the template already has: every\n"
+        "# `latex` pattern below must appear in cv.tex exactly as written,\n"
+        "# with the placeholder replaced by the default. The recipe engine\n"
+        "# refuses to guess when a pattern matches anything other than\n"
+        "# exactly one place, so a recipe and a template that have drifted\n"
+        "# apart fail loudly instead of rendering the wrong thing.\n"
+        "#\n"
+        "# Patterns are SUBSTRINGS, not whole lines, so editing an unrelated\n"
+        "# part of a line does not break the recipe. Keep just enough\n"
+        "# context for the pattern to be unique.\n"
+        "#\n"
+        "# This file is yours to edit. The generator proposes; a render\n"
+        "# proves. A setting is only real once changing it changes the page.\n"
+        "#\n"
+        "# YAML quoting: the values are single-quoted, because a LaTeX\n"
+        "# backslash is literal in a YAML single-quoted scalar and an escape\n"
+        "# in a double-quoted one. Single quotes mean exactly what is written.\n"
+    )
+    body = _dump_yaml(data)
+    return header + body
+
+
+def _dump_yaml(data: dict) -> str:
+    """Dump a recipe as YAML, in a way that does not need PyYAML.
+
+    The recipe's own shape is known and small -- a mapping of scalars
+    and a list of mappings -- so it can be written directly. That keeps
+    the plugin's dependency list unchanged.
+    """
+    lines: list[str] = []
+    for key, value in data.items():
+        if key == "knobs":
+            continue
+        lines.append(f"{key}: {_yaml_scalar(value)}")
+    knobs = data.get("knobs") or []
+    if knobs:
+        if lines:
+            lines.append("")
+        lines.append("knobs:")
+        for knob in knobs:
+            first = True
+            for key, value in knob.items():
+                prefix = "  - " if first else "    "
+                first = False
+                if isinstance(value, list):
+                    lines.append(f"{prefix}{key}:")
+                    for item in value:
+                        lines.append(f"      - {_yaml_scalar(item)}")
+                else:
+                    lines.append(f"{prefix}{key}: {_yaml_scalar(value)}")
+    return "\n".join(lines) + "\n"
+
+
+def _yaml_scalar(value) -> str:
+    """A YAML scalar, quoted so it means exactly what it says."""
+    if value is None:
+        return "null"
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, (int, float)):
+        return str(value)
+    text = str(value)
+    return "'" + text.replace("'", "''") + "'"
 
 
 def check_recipe_against_source(recipe: Recipe, source: str) -> None:

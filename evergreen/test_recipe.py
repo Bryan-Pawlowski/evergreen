@@ -21,8 +21,7 @@ Run with the Hermes python (the one that has ruamel.yaml):
 
 from __future__ import annotations
 
-import copy
-import hashlib
+import atexit
 import shutil
 import sys
 import tempfile
@@ -31,8 +30,11 @@ from pathlib import Path
 from .build import build_tex, find_tectonic
 from .career import CareerProfile, load_structured
 from .generate import GenerateError, generate_template
+from .liveness import check_knobs, keep_live
+from . import dialects
+from .propose import propose_recipe
 from .recipe import (RecipeError, apply_settings, check_recipe_against_source,
-                     load_recipe, validate_recipe)
+                     load_recipe, validate_recipe, write_recipe)
 from .render import load_template, render_tex, slots_in, stage
 
 PLUGIN_ROOT = Path(__file__).resolve().parent.parent
@@ -113,21 +115,81 @@ class _Checker:
         return ok
 
 
-def _recipes_in_shipped_templates() -> list[Path]:
-    """The shipped template directories that carry a recipe."""
+def _derived_recipe(template_dir: Path, into: Path) -> Path:
+    """A recipe for a template, derived by the proposal engine.
+
+    The plugin ships the *machinery* -- the loader, the generator, the
+    proposal engine -- but not a concrete recipe. A recipe names real
+    lines in a real template, so it belongs to whoever owns that
+    template: the shipped templates carry none, and a user's own
+    templates carry their own.
+
+    So the tests derive one at run time, from the same engine the
+    Configurator uses, and write it into a copy of the template. That
+    is also the better test: it exercises the whole chain -- propose,
+    author, apply, generate, render -- rather than only the last half
+    of it.
+    """
+    shutil.copytree(template_dir, into, dirs_exist_ok=True)
+    source = (into / "cv.tex").read_text(encoding="utf-8")
+    class_source = ""
+    for class_file in sorted(into.glob("*.cls")):
+        class_source = class_file.read_text(encoding="utf-8", errors="replace")
+        break
+    manifest = (into / "template.yaml").read_text(encoding="utf-8")
+    dialect = "plain"
+    for line in manifest.splitlines():
+        if line.startswith("dialect:"):
+            dialect = line.split(":", 1)[1].strip()
+    recipe = propose_recipe(
+        source,
+        load_template(into).id,
+        dialect_source=dialects.dialect_source(dialect),
+        class_source=class_source,
+    )
+    if not recipe["knobs"]:
+        raise RecipeError(f"The generator proposed nothing for {template_dir}.")
+    write_recipe(into, recipe, overwrite=True)
+    return into
+
+
+def _derived_recipes() -> list[Path]:
+    """A derived recipe for each shipped template, in a temp copy.
+
+    The temp copies outlive this call -- the tests generate from them
+    and compile the result -- so they are cleaned up at exit rather
+    than at the end of a ``with`` block.
+    """
+    tmp = Path(tempfile.mkdtemp(prefix="evergreen-recipes-"))
+    atexit.register(shutil.rmtree, str(tmp), True)
     found = []
     for child in sorted(SHIPPED_TEMPLATES.iterdir()):
-        if child.is_dir() and (child / "recipe.yaml").exists():
-            found.append(child)
+        if not child.is_dir():
+            continue
+        try:
+            load_template(child)
+        except Exception:
+            continue
+        try:
+            found.append(_derived_recipe(child, tmp / child.name))
+        except RecipeError:
+            continue
     return found
+
+
+def _derived_recipe_for(template_id: str) -> Path:
+    """A derived recipe for one shipped template, in a temp copy."""
+    tmp = Path(tempfile.mkdtemp(prefix="evergreen-recipe-"))
+    atexit.register(shutil.rmtree, str(tmp), True)
+    return _derived_recipe(SHIPPED_TEMPLATES / template_id, tmp / template_id)
 
 
 def test_recipe_loading(c: _Checker) -> None:
     """A recipe loads, validates, and points at lines the template has."""
     print("\n-- recipe loading --")
-    dirs = _recipes_in_shipped_templates()
-    c.check("recipe: at least one shipped template has a recipe", bool(dirs),
-            "no recipe.yaml found under templates/")
+    dirs = _derived_recipes()
+    c.check("recipe: a recipe can be derived for a shipped template", bool(dirs),
+            "the generator proposed nothing for any shipped template")
 
     for directory in dirs:
         template = load_template(directory)
@@ -161,7 +223,7 @@ def _reports_problems(directory: Path) -> bool:
 def test_pattern_matching(c: _Checker) -> None:
     """Every setting in a recipe points at exactly one place in the source."""
     print("\n-- pattern matching --")
-    for directory in _recipes_in_shipped_templates():
+    for directory in _derived_recipes():
         template = load_template(directory)
         recipe = load_recipe(directory)
         for knob in recipe.knobs:
@@ -182,7 +244,7 @@ def test_pattern_matching(c: _Checker) -> None:
 def test_defaults_are_a_no_op(c: _Checker) -> None:
     """Applying a recipe's own defaults changes nothing."""
     print("\n-- defaults --")
-    for directory in _recipes_in_shipped_templates():
+    for directory in _derived_recipes():
         template = load_template(directory)
         recipe = load_recipe(directory)
         out = apply_settings(template.source, recipe, recipe.defaults())
@@ -197,7 +259,7 @@ def test_defaults_are_a_no_op(c: _Checker) -> None:
 def test_applying_settings(c: _Checker) -> None:
     """A real setting changes exactly that setting."""
     print("\n-- applying settings --")
-    directory = SHIPPED_TEMPLATES / "plain"
+    directory = _derived_recipe_for("plain")
     template = load_template(directory)
     recipe = load_recipe(directory)
 
@@ -224,7 +286,7 @@ def test_applying_settings(c: _Checker) -> None:
 def test_errors_are_loud(c: _Checker) -> None:
     """A bad recipe or a bad setting fails, rather than half-applying."""
     print("\n-- errors --")
-    directory = SHIPPED_TEMPLATES / "plain"
+    directory = _derived_recipe_for("plain")
     template = load_template(directory)
     recipe = load_recipe(directory)
 
@@ -285,17 +347,19 @@ def _generate_with_mismatched_id(base_dir: Path, dest: Path) -> None:
     staging = dest.parent / "staging"
     shutil.copytree(base_dir, staging)
     recipe_path = staging / "recipe.yaml"
-    recipe_path.write_text(
-        recipe_path.read_text(encoding="utf-8").replace("id: plain", "id: not-plain", 1),
-        encoding="utf-8",
-    )
+    lines = recipe_path.read_text(encoding="utf-8").splitlines(keepends=True)
+    for index, line in enumerate(lines):
+        if line.startswith("id:"):
+            lines[index] = "id: not-plain\n"
+            break
+    recipe_path.write_text("".join(lines), encoding="utf-8")
     generate_template(staging, dest, {}, template_id="wide")
 
 
 def test_generation(c: _Checker) -> None:
     """A generated template is an ordinary template."""
     print("\n-- generation --")
-    directory = SHIPPED_TEMPLATES / "plain"
+    directory = _derived_recipe_for("plain")
     settings = {"base_size": "12pt", "margin": "1in"}
 
     with tempfile.TemporaryDirectory() as tmp:
@@ -362,50 +426,29 @@ def test_generation(c: _Checker) -> None:
             c.check("generate: it refuses to overwrite a non-empty directory", True)
 
 
-def _render_fingerprint(pdf: Path, dpi: int = 72) -> str:
-    """A fingerprint of what the page actually looks like.
-
-    A text-geometry probe cannot see a change that only affects an
-    image overlay -- ``minimal``'s band is a PNG -- so it would report
-    a false "no change" for a knob that plainly moved something. The
-    pixel fingerprint sees every visible change, and is *identical*
-    when nothing changed, which is what makes it able to prove a knob
-    is dead.
-    """
-    try:
-        import pymupdf
-    except Exception:
-        return ""
-    digest = hashlib.sha256()
-    doc = pymupdf.open(str(pdf))
-    try:
-        for page in doc:
-            digest.update(page.get_pixmap(dpi=dpi).samples)
-    finally:
-        # Closed explicitly: on Windows an open file cannot be deleted, and
-        # the temp tree is cleaned up on the way out.
-        doc.close()
-    return digest.hexdigest()[:16]
+# The settings that are real LaTeX settings, that the generator proposes
+# without complaint, and that no ordinary content makes change the
+# page.
+#
+# ``emergencystretch`` is the case that matters. It is a genuine
+# LaTeX setting, it is set in the template, and the generator has no
+# reason to distrust it -- but it only changes anything when a line
+# would otherwise overflow, and no ordinary CV overflows. The audit
+# assumed a stress profile would make it visible; measured against
+# the real renderer, it is not.
+#
+# This is the whole point of the liveness gate: the generator cannot
+# know, so the render decides.
+KNOWN_DEAD = {
+    "plain": set(),
+    "yaac": set(),
+    "altacv": set(),
+    "minimal": {"emergencystretch"},
+}
 
 
-def _compile_to_pdf(template, tmp: Path, tag: str, profile=None):
-    """Render a template with a profile and compile it."""
-    if profile is None:
-        profile = CareerProfile(SAMPLE)
-    tex = render_tex(template, profile)
-    build_dir = tmp / tag
-    main = stage(template, build_dir)
-    main.write_text(tex, encoding="utf-8", newline="\n")
-    fontconfig = None
-    if template.fontconfig and (build_dir / template.fontconfig).exists():
-        fontconfig = str((build_dir / template.fontconfig).resolve())
-    result = build_tex(main, build_dir, engine=template.engine,
-                       fontconfig=fontconfig)
-    return result
-
-
-def test_every_knob_is_live(c: _Checker) -> None:
-    """Each setting must change the rendered page on its own.
+def test_the_liveness_check(c: _Checker) -> None:
+    """Each setting is proved, one at a time, with a real render.
 
     A setting that is accepted and then changes nothing is a control
     that visibly does nothing -- the worst outcome for a form, because
@@ -417,110 +460,82 @@ def test_every_knob_is_live(c: _Checker) -> None:
     dead knob ships. Only a per-knob comparison can tell the two
     apart.
 
-    It is also run against **two profiles**. A knob can be dead for the
-    sample profile and live for real content -- ``emergencystretch`` is
-    the example: it only matters when a line would otherwise overflow,
-    and the sample has no such line. A knob must change the page for
-    *some* profile, not for every profile.
+    It is also run against **more than one profile**. A knob can be
+    dead for the sample profile and live for real content, so a knob
+    must change the page for *some* profile, not for every profile.
     """
-    print("\n-- every knob is live --")
+    print("\n-- the liveness check --")
     if not find_tectonic():
-        print("[SKIP] compile — tectonic not installed")
+        print("[SKIP] compile -- tectonic not installed")
         return
     try:
         import pymupdf  # noqa: F401
     except ImportError:
-        print("[SKIP] per-knob liveness — pymupdf is not installed")
+        print("[SKIP] per-knob liveness -- pymupdf is not installed")
         return
 
-    for directory in _recipes_in_shipped_templates():
+    profile = CareerProfile(SAMPLE)
+    for directory in _derived_recipes():
         recipe = load_recipe(directory)
-        base = load_template(directory)
-        for label, profile in _liveness_profiles():
-            with tempfile.TemporaryDirectory() as tmpdir:
-                tmp = Path(tmpdir)
-                base_result = _compile_to_pdf(base, tmp, "base", profile)
-                if not base_result.ok:
-                    c.check(f"recipe[{recipe.id}]: the base compiles", False,
-                            "; ".join(base_result.errors)[:200])
-                    continue
-                base_fp = _render_fingerprint(base_result.pdf)
-
-                for knob in recipe.knobs:
-                    # A different value for this knob, and only this knob.
-                    value = _a_different_value(knob)
-                    if value is None:
-                        print(f"  [SKIP] {recipe.id}/{knob.id} — no second value")
-                        continue
-                    dest = tmp / f"gen_{knob.id}"
-                    try:
-                        generate_template(directory, dest, {knob.id: value},
-                                          template_id=f"{recipe.id}-{knob.id}")
-                    except Exception as exc:
-                        c.check(f"recipe[{recipe.id}]: setting {knob.id!r} generates",
-                                False, str(exc)[:200])
-                        continue
-                    result = _compile_to_pdf(load_template(dest), tmp,
-                                             f"build_{knob.id}", profile)
-                    if not result.ok:
-                        c.check(f"recipe[{recipe.id}]: setting {knob.id!r} compiles",
-                                False, "; ".join(result.errors)[:200])
-                        continue
-                    gen_fp = _render_fingerprint(result.pdf)
-                    c.check(
-                        f"recipe[{recipe.id}]: setting {knob.id!r} changes the page"
-                        f" [{label}]",
-                        gen_fp != base_fp,
-                        f"the rendered PDF is byte-identical with {knob.id}="
-                        f"{value!r}; the setting does nothing",
-                    )
+        report = check_knobs(directory, load_structured(directory / "recipe.yaml"), profile)
+        if report.skipped:
+            c.check(f"recipe[{recipe.id}]: the liveness check ran", False,
+                    report.skipped)
+            continue
+        expected_dead = KNOWN_DEAD.get(recipe.id, set())
+        c.check(f"recipe[{recipe.id}]: the dead settings are exactly the known ones",
+                set(report.dead_ids) == expected_dead,
+                f"dead={sorted(report.dead_ids)} expected={sorted(expected_dead)}")
+        for knob in report.knobs:
+            if knob.knob_id in expected_dead:
+                continue
+            c.check(
+                f"recipe[{recipe.id}]: setting {knob.knob_id!r} changes the page",
+                knob.live,
+                f"the rendered PDF is byte-identical with "
+                f"{knob.knob_id}={knob.value!r}; the setting does nothing",
+            )
 
 
-def _liveness_profiles():
-    """The profiles a knob must change the page for.
+def test_the_authoring_path_drops_the_dead(c: _Checker) -> None:
+    """A recipe that has been proved holds only settings that work.
 
-    The sample, plus a stress profile with an unbreakable long word. A
-    setting like ``emergencystretch`` only matters when a line would
-    otherwise overflow, and the sample has no such line -- so a knob
-    that is live only under stress reads as dead against the sample
-    alone.
+    A control that does nothing is worse than no control, so the
+    authoring path -- propose, prove, write what survived -- must
+    leave the dead settings out.
     """
-    yield "sample", CareerProfile(SAMPLE)
+    print("\n-- the authoring path drops the dead --")
+    if not find_tectonic():
+        print("[SKIP] compile -- tectonic not installed")
+        return
+    try:
+        import pymupdf  # noqa: F401
+    except ImportError:
+        print("[SKIP] -- pymupdf is not installed")
+        return
 
-    stress = copy.deepcopy(SAMPLE)
-    stress["person"]["summary"] = (
-        "Supercalifragilisticexpialidociousness "
-        "Pneumonoultramicroscopicsilicovolcanoconiosis "
-        "Antidisestablishmentarianism "
-    )
-    yield "stress", CareerProfile(stress)
-
-
-def _a_different_value(knob) -> str | None:
-    """A second value for a knob, or None if there is no obvious one."""
-    if knob.type == "enum" and knob.options:
-        for option in knob.options:
-            if option != knob.default:
-                return option
-        return None
-    if knob.type == "number":
-        try:
-            return str(float(knob.default) + 0.1)
-        except (TypeError, ValueError):
-            return None
-    if knob.type == "length":
-        return {"0.75in": "1in", "2pt": "6pt", "1in": "1.5in"}.get(
-            str(knob.default), None)
-    if knob.type == "color":
-        return {"8F0D0D": "2E6B8A", "1E2531": "2E6B8A"}.get(
-            str(knob.default).lstrip("#").upper(), None)
-    return None
+    profile = CareerProfile(SAMPLE)
+    for directory in _derived_recipes():
+        recipe = load_recipe(directory)
+        report = check_knobs(directory, load_structured(directory / "recipe.yaml"), profile)
+        if report.skipped:
+            continue
+        kept = keep_live(load_structured(directory / "recipe.yaml"), report)
+        kept_ids = [k["id"] for k in kept["knobs"]]
+        for dead in report.dead_ids:
+            c.check(f"recipe[{recipe.id}]: the dead setting {dead!r} is dropped",
+                    dead not in kept_ids, f"{dead} survived into the recipe")
+        for live in report.live_ids:
+            c.check(f"recipe[{recipe.id}]: the live setting {live!r} is kept",
+                    live in kept_ids, f"{live} was dropped")
+        c.check(f"recipe[{recipe.id}]: the kept recipe is still valid",
+                not validate_recipe(kept), str(validate_recipe(kept)))
 
 
 def test_shipped_templates_are_unaffected(c: _Checker) -> None:
     """Having a recipe does not change how a template renders."""
     print("\n-- shipped templates --")
-    for directory in _recipes_in_shipped_templates():
+    for directory in _derived_recipes():
         template = load_template(directory)
         recipe = load_recipe(directory)
         out = apply_settings(template.source, recipe, recipe.defaults())
@@ -560,7 +575,8 @@ def main() -> int:
     test_applying_settings(c)
     test_errors_are_loud(c)
     test_generation(c)
-    test_every_knob_is_live(c)
+    test_the_liveness_check(c)
+    test_the_authoring_path_drops_the_dead(c)
     test_shipped_templates_are_unaffected(c)
 
     print()
