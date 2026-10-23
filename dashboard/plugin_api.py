@@ -37,7 +37,8 @@ loop the rest of the dashboard is served from. An ``async def`` that called
 from the process's working directory: a server's cwd is not the user's, and
 ``find_workspace`` walking up from it would act on whatever directory the
 gateway happened to start in. A request names its workspace (see
-``/workspaces``), or there is exactly one and it is used.
+``/workspaces``), or the operator's configured one is used, or there is exactly
+one and it is used.
 """
 
 from __future__ import annotations
@@ -166,6 +167,10 @@ def _workspace(param: str | None) -> Workspace:
     A ``workspace`` value is a name (``<hermes home>/<name>/``) or a path to any
     directory holding a ``career.yaml``. Both are checked in that order, because
     a name is the primary handle and a path is the escape hatch.
+
+    A name is resolved against what ``/workspaces`` lists before it is resolved
+    as a Hermes-home directory name, so the two never disagree about a
+    workspace both of them know (see the note below).
     """
     text = (param or "").strip()
     if text:
@@ -178,6 +183,17 @@ def _workspace(param: str | None) -> Workspace:
             if candidate.exists():
                 return candidate
         else:
+            # A listed workspace resolves by the name the LISTING used. For a
+            # workspace named under the Hermes home that is the same thing as
+            # `workspace_path_for_name`; for the configured one it is not, since
+            # the listing names it after its directory, which can live anywhere.
+            # Without this, the pane's picker handed back a name this door then
+            # refused, and the refusal named the workspace it had just rejected.
+            for entry in _candidates():
+                if entry["name"] == text:
+                    listed = Workspace(Path(entry["path"]))
+                    if listed.exists():
+                        return listed
             try:
                 named = Workspace(workspace_path_for_name(text))
             except CareerProfileError as exc:
@@ -192,6 +208,15 @@ def _workspace(param: str | None) -> Workspace:
         )
 
     candidates = _candidates()
+    # Nothing was named. The operator's configured workspace IS the answer: it is
+    # a setting, not a guess, and preferring it keeps a first-ever pane load
+    # (which sends no workspace at all) from failing on a machine that also has
+    # named workspaces under its Hermes home.
+    configured = _configured_workspace_path()
+    if configured:
+        workspace = Workspace(Path(configured).expanduser())
+        if workspace.exists():
+            return workspace
     if len(candidates) == 1:
         return Workspace(Path(candidates[0]["path"]))
     if not candidates:
