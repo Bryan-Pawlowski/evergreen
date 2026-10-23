@@ -1,0 +1,53 @@
+# The settings the Plain template exposes.
+#
+# A recipe POINTS AT the lines the template already has: every `latex`
+# pattern below must appear in cv.tex exactly as written, with the
+# placeholder replaced by the default. The generator refuses to guess
+# when a pattern matches anything other than exactly one place, so a
+# recipe and a template that have drifted apart fail loudly instead of
+# rendering the wrong thing.
+#
+# Patterns are SUBSTRINGS, not whole lines, so editing an unrelated part
+# of a line does not break the recipe. Keep just enough context for the
+# pattern to be unique.
+#
+# The template itself is unchanged by having a recipe — it renders
+# identically whether or not this file exists.
+#
+# YAML quoting: the values below are single-quoted, because a LaTeX
+# backslash is literal in a YAML single-quoted scalar and an escape in a
+# double-quoted one. Single quotes mean exactly what is written.
+id: plain
+name: 'Plain'
+description: 'The one-column article CV. The bootstrap template, made adjustable.'
+
+knobs:
+  - id: base_size
+    label: 'Base font size'
+    description: 'The size the body text is set at.'
+    type: enum
+    default: '10pt'
+    options: ['10pt', '11pt', '12pt']
+    latex: '\documentclass[<<value>>,letterpaper]{article}'
+
+  - id: margin
+    label: 'Page margin'
+    description: 'The margin around the page.'
+    type: length
+    default: '0.75in'
+    latex: '\usepackage[margin=<<value>>]{geometry}'
+
+  - id: section_size
+    label: 'Section heading size'
+    description: 'The size of a section heading.'
+    type: enum
+    default: '\large'
+    options: ['\large', '\Large', '\LARGE', '\huge']
+    latex: '{\section}{<<value>>\bfseries}'
+
+  - id: item_spacing
+    label: 'Bullet spacing'
+    description: 'The vertical gap between bullets.'
+    type: length
+    default: '2pt'
+    latex: 'itemsep=<<value>>, parsep=0pt'
