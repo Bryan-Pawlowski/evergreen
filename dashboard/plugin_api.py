@@ -79,7 +79,12 @@ from evergreen.generate import (  # noqa: E402
     GenerateError,
     generate_template,
 )
-from evergreen.recipe import RecipeError, has_recipe, load_recipe  # noqa: E402
+from evergreen.recipe import (  # noqa: E402
+    RECIPE_FILENAME,
+    RecipeError,
+    has_recipe,
+    load_recipe,
+)
 
 router = APIRouter()
 
@@ -457,6 +462,7 @@ def post_generate(request: GenerateRequest) -> dict[str, Any]:
             "dir": str(dest),
             "main": str(main_path),
             "manifest": str(dest / "template.yaml"),
+            "recipe": str(dest / RECIPE_FILENAME),
             "settings": str(dest / SETTINGS_FILENAME),
         },
         "settings": {

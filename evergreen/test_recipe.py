@@ -370,6 +370,7 @@ def test_generation(c: _Checker) -> None:
         c.check("generate: it wrote a cv.tex", (dest / "cv.tex").exists())
         c.check("generate: it wrote a template.yaml", (dest / "template.yaml").exists())
         c.check("generate: it recorded the settings", (dest / "settings.yaml").exists())
+        c.check("generate: it carried the recipe", (dest / "recipe.yaml").exists())
 
         manifest = (dest / "template.yaml").read_text(encoding="utf-8")
         c.check("generate: the manifest carries the new id", "id: wide" in manifest, manifest)
@@ -396,6 +397,23 @@ def test_generation(c: _Checker) -> None:
                 "%HERMES:SLOT" not in tex)
         c.check("generate: the result carries the new settings",
                 "\\documentclass[12pt,letterpaper]{article}" in tex)
+
+        # The recipe travels with the template. A generated template's lines
+        # are its own, so re-opening it in the Configurator must offer the
+        # same knobs, starting from the values it was built with -- otherwise
+        # a generated template is a dead end and the settings it recorded are
+        # the only trace of what was chosen.
+        carried = load_recipe(dest)
+        c.check("generate: the carried recipe describes the new template",
+                carried.id == "wide", carried.id)
+        c.check("generate: the carried recipe starts from the chosen values",
+                str(carried.knob("margin").default) == "1in"
+                and str(carried.knob("base_size").default) == "12pt",
+                f"margin={carried.knob('margin').default!r} "
+                f"base_size={carried.knob('base_size').default!r}")
+        generated_source = (dest / "cv.tex").read_text(encoding="utf-8")
+        c.check("generate: the carried recipe is a no-op at its defaults",
+                apply_settings(generated_source, carried, {}) == generated_source)
 
         # And it must compile.
         if not find_tectonic():
@@ -424,6 +442,55 @@ def test_generation(c: _Checker) -> None:
                     False, "it overwrote it")
         except GenerateError:
             c.check("generate: it refuses to overwrite a non-empty directory", True)
+
+    # Two generations compose. Generating from a generated template reaches the
+    # same LaTeX as applying both sets of settings to the base at once, which is
+    # what makes a generated template a configurable template rather than a
+    # frozen copy of one.
+    base_source = (directory / "cv.tex").read_text(encoding="utf-8")
+    base_recipe = load_recipe(directory)
+    with tempfile.TemporaryDirectory() as tmp:
+        first = Path(tmp) / "first"
+        second = Path(tmp) / "second"
+        generate_template(directory, first, settings, template_id="wide")
+        generate_template(first, second, {"margin": "1.25in"}, template_id="wider")
+        composed = (second / "cv.tex").read_text(encoding="utf-8")
+        direct = apply_settings(base_source, base_recipe,
+                                {**settings, "margin": "1.25in"})
+        c.check("generate: two generations compose to one", composed == direct,
+                "the second generation did not reach the same LaTeX as one pass")
+        c.check("generate: the second recipe describes the second template",
+                load_recipe(second).id == "wider", load_recipe(second).id)
+
+    # A recipe whose knobs point at the same line can half-apply: the first
+    # rewrite swallows the second knob's pattern, and ``apply_settings``
+    # substitutes each pattern in turn, so the second silently matches nothing.
+    # The carried recipe is checked against the generated source, so that is an
+    # error rather than a template carrying a control that does nothing.
+    with tempfile.TemporaryDirectory() as tmp:
+        staging = Path(tmp) / "staging"
+        dest = Path(tmp) / "overlap"
+        shutil.copytree(directory, staging)
+        write_recipe(staging, {
+            "id": "plain",
+            "name": "Plain",
+            "knobs": [
+                {"id": "margin", "label": "Page margin", "type": "length",
+                 "default": "0.75in",
+                 "latex": "\\usepackage[margin=<<value>>]{geometry}"},
+                {"id": "tail", "label": "Margin tail", "type": "text",
+                 "default": "0.75in",
+                 "latex": "[margin=<<value>>]{geometry}"},
+            ],
+        }, overwrite=True)
+        try:
+            generate_template(staging, dest, {"margin": "1in"}, template_id="overlap")
+            c.check("generate: a rewrite that swallows another knob is refused",
+                    False, "it generated a recipe whose second knob matches nothing")
+        except GenerateError as exc:
+            c.check("generate: a rewrite that swallows another knob is refused",
+                    "cannot be carried" in str(exc), str(exc))
+        c.check("generate: and the refusal wrote nothing", not dest.exists())
 
 
 # The settings that are real LaTeX settings, that the generator proposes

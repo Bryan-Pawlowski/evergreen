@@ -328,6 +328,32 @@ def test_generate(c: _Checker, client, home: Path) -> None:
     c.check("generate: the result is discoverable as a local template",
             (rows.get("wide") or {}).get("source") == "local", str(rows.get("wide")))
 
+    # And it carries the recipe, so it is a base in its own right rather than a
+    # dead end that only recorded what it was built from.
+    recipe_path = Path(str((payload.get("paths") or {}).get("recipe", "")))
+    c.check("generate: the response points at a recipe that exists",
+            recipe_path.is_file() and recipe_path == dest / "recipe.yaml",
+            str(payload.get("paths")))
+    carried = recipe_path.read_text(encoding="utf-8")
+    c.check("generate: the carried recipe describes the new template",
+            "id: 'wide'" in carried, carried)
+    c.check("generate: the carried recipe starts from the chosen values",
+            "'1in'" in carried and "'12pt'" in carried, carried)
+    c.check("generate: the generated template is itself a base",
+            (rows.get("wide") or {}).get("generate_from") is True, str(rows.get("wide")))
+
+    second = client.post("/generate", json={
+        "base": "wide", "id": "wider", "workspace": "testws",
+        "settings": {"margin": "1.25in"},
+    })
+    c.check("generate: generating from a generated template succeeds",
+            second.status_code == 200, second.text[:400])
+    wider = (workspace_dir / "templates.local" / "wider" / "cv.tex").read_text(encoding="utf-8")
+    c.check("generate: the second generation keeps the first's settings",
+            "\\documentclass[12pt,letterpaper]{article}" in wider)
+    c.check("generate: the second generation applies its own",
+            "\\usepackage[margin=1.25in]{geometry}" in wider)
+
     # Copying the base's build inputs is the other half of a self-contained
     # template directory; ``plain`` has none, so this is the case with some.
     yaac = client.post("/generate", json={
