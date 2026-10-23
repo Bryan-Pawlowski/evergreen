@@ -33,10 +33,13 @@ jobs:
           chmod +x /usr/local/bin/tectonic
           tectonic --version
 
+      # pymupdf is not optional here: the liveness check compares the
+      # rendered *pixels* of two pages, and without it the check skips
+      # rather than runs. A skipped gate is not a gate.
       - name: Install the plugin's Python dependencies
         run: |
           python -m pip install --upgrade pip
-          python -m pip install ruamel.yaml jsonschema
+          python -m pip install ruamel.yaml jsonschema pymupdf
 
       - name: Self-test (compiles every shipped template)
         run: python -m evergreen.selftest
@@ -48,6 +51,15 @@ jobs:
         # compiles every shipped template AND a generated one, so a
         # broken seam cannot reach a release.
         run: python -m evergreen.test_recipe
+
+      - name: Recipe proposal self-test (the generator, and its traps)
+        # The generator proposes the settings a template could expose,
+        # and flags the ones that are traps. This test asserts it finds
+        # exactly the dead settings the audit measured -- every one, and
+        # no false alarms. A missed trap ships a control that does
+        # nothing; a false alarm makes the generator's warnings noise,
+        # and a person stops reading them.
+        run: python -m evergreen.test_propose
 
       # `hermes plugins validate` is the authoritative gate, but it needs a
       # Hermes new enough to have it, and the PyPI release lags the git
