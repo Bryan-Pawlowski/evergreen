@@ -35,7 +35,9 @@ change. 1 = it does not. 2 = tectonic is not installed.
 from __future__ import annotations
 
 import hashlib
+import shutil
 import sys
+from types import SimpleNamespace
 import tempfile
 from pathlib import Path
 
@@ -47,18 +49,70 @@ from check_render_parity import (NoTextExtractor,  # noqa: E402
                                  _claims, _declared_slots, _extractor_name,
                                  _norm, _profile, _read_text_layer)
 from evergreen.build import build_tex, find_tectonic  # noqa: E402
+from evergreen.dialects import dialect_source  # noqa: E402
 from evergreen.generate import generate_template  # noqa: E402
+from evergreen.liveness import different_value  # noqa: E402
+from evergreen.propose import propose_recipe  # noqa: E402
+from evergreen.recipe import write_recipe  # noqa: E402
 from evergreen.render import load_template, render_tex, stage  # noqa: E402
 from evergreen.selftest import SAMPLE  # noqa: E402
 
-# The settings used for the comparison. Deliberately hits several knobs
-# at once, including the ones that change the page's geometry.
-SETTINGS = {
-    "base_size": "12pt",
-    "margin": "1in",
-    "section_size": "\\LARGE",
-    "bullet_indent": "18pt",
-}
+# The base template the comparison is made against.
+BASE_TEMPLATE = "plain"
+
+
+def _derived_base(tmp: Path) -> tuple[Path, dict]:
+    """A copy of the base template, carrying a recipe derived at run time.
+
+    The plugin ships the *machinery* -- the loader, the generator, the
+    proposal engine -- but not a concrete recipe. A recipe names real
+    lines in a real template, so it belongs to whoever owns that
+    template. So the check derives one here, with the same engine the
+    Configurator uses, and writes it into a copy of the template.
+
+    That is also a stronger check than a hand-written recipe would be:
+    it exercises the whole chain -- propose, author, apply, generate,
+    render -- rather than only the last half of it.
+    """
+    source_dir = REPO_ROOT / "templates" / BASE_TEMPLATE
+    dest = tmp / "base-with-recipe"
+    shutil.copytree(source_dir, dest)
+    source = (dest / "cv.tex").read_text(encoding="utf-8")
+    class_source = ""
+    for class_file in sorted(dest.glob("*.cls")):
+        class_source = class_file.read_text(encoding="utf-8", errors="replace")
+        break
+    manifest = (dest / "template.yaml").read_text(encoding="utf-8")
+    dialect = "plain"
+    for line in manifest.splitlines():
+        if line.startswith("dialect:"):
+            dialect = line.split(":", 1)[1].strip()
+    recipe = propose_recipe(source, BASE_TEMPLATE,
+                            dialect_source=dialect_source(dialect),
+                            class_source=class_source)
+    write_recipe(dest, recipe, overwrite=True)
+    return dest, recipe
+
+
+def _settings_for(recipe: dict) -> dict:
+    """A different value for every setting in the recipe.
+
+    Derived, not hard-coded: a setting nobody anticipated would
+    otherwise be left at its default, and the check would prove
+    nothing about it.
+    """
+    settings = {}
+    for knob in recipe.get("knobs", []):
+        stub = SimpleNamespace(
+            id=knob["id"],
+            type=knob["type"],
+            default=knob["default"],
+            options=knob.get("options") or [],
+        )
+        value = different_value(stub)
+        if value is not None:
+            settings[knob["id"]] = value
+    return settings
 
 
 def _compile(template, tmp: Path, tag: str) -> tuple[Path, str]:
@@ -165,18 +219,24 @@ def main() -> int:
         return 2
     print(f"generated-parity: text extractor: {extractor}")
 
-    base_dir = REPO_ROOT / "templates" / "plain"
-    recipe_path = base_dir / "recipe.yaml"
-    if not recipe_path.exists():
-        print("FAIL: templates/plain has no recipe.yaml; nothing to generate from.")
-        return 1
-
-    base = load_template(base_dir)
     claims = _claims(SAMPLE)
     findings: list[str] = []
 
     with tempfile.TemporaryDirectory() as tmpdir:
         tmp = Path(tmpdir)
+        try:
+            base_dir, recipe_data = _derived_base(tmp)
+        except Exception as exc:
+            print(f"FAIL: no recipe could be derived for {BASE_TEMPLATE}: {exc}")
+            return 1
+
+        settings = _settings_for(recipe_data)
+        if not settings:
+            print(f"FAIL: {BASE_TEMPLATE} has no setting that can be changed.")
+            return 1
+        print(f"generated-parity: settings under test: {sorted(settings)}")
+
+        base = load_template(base_dir)
         try:
             base_pdf, base_text = _compile(base, tmp, "base")
         except NoTextExtractor:
@@ -188,7 +248,7 @@ def main() -> int:
 
         dest = tmp / "generated"
         try:
-            generate_template(base_dir, dest, SETTINGS,
+            generate_template(base_dir, dest, settings,
                               template_id="plain-configured", name="Plain (configured)")
         except Exception as exc:
             print(f"FAIL: generation failed: {exc}")

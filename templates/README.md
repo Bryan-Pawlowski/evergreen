@@ -72,6 +72,11 @@ Optional. A recipe declares which settings a template lets someone change, and
 which line of `cv.tex` each setting rewrites. It is what the Configurator
 builds its form from, and what `hermes career generate` reads.
 
+**The shipped templates do not carry one.** A recipe points at real lines in
+a real template, so it belongs to whoever owns that template, not to the
+plugin. A template of your own in `templates.local/<id>/` can have one, and
+`hermes career author <id> --path <dir>` will write it for you.
+
 ```yaml
 id: plain                       # must match the template's id
 name: 'Plain'
@@ -99,6 +104,26 @@ Three rules, all enforced:
 
 A template without a recipe is still a complete template — it just has no
 adjustable settings, and the Configurator offers nothing to adjust.
+
+### A setting is only real once a render proves it
+
+A setting that is accepted and then changes nothing is a control that
+visibly does nothing, and the user cannot tell it apart from one that
+worked. So a setting is not a setting until a render proves that changing
+it, on its own, changes the page.
+
+The check is **per knob**, not on the settings as a whole — changing every
+setting at once would let a dead knob hide behind a live one — and it is
+made against **more than one profile**, because a setting can be dead for
+ordinary content and live for content that overflows. The comparison is on
+the rendered **pixels**, not on the text: a text probe cannot see a change
+that only affects an image overlay.
+
+`hermes career author` runs that check, so the recipe it writes holds only
+settings known to change the page. Measured on the shipped `minimal`
+template: `emergencystretch` is a real LaTeX setting that the generator
+proposes without complaint, and that no ordinary content makes visible —
+so it is left out.
 
 ## Dialects
 
