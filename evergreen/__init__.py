@@ -35,7 +35,8 @@ from .propose import (inline_spacing_overrides, propose,  # noqa: F401  (re-expo
                       propose_recipe)
 from .recipe import (Recipe, RecipeError, apply_settings,  # noqa: F401  (re-exported)
                      load_recipe, write_recipe)
-from .render import (TemplateError, discover_templates, render_tex, slots_in, stage)
+from .render import (TemplateError, discover_templates, render_tex,  # noqa: F401
+                     slot_columns, slots_in, stage)
 from .render import load_template  # noqa: F401  (re-exported)
 
 PLUGIN_ROOT = Path(__file__).resolve().parent.parent

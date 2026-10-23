@@ -180,7 +180,11 @@ def rest_calls(source: str) -> list[tuple[str, str]]:
     of the options must not decide whether the check works.
     """
     calls: list[tuple[str, str]] = []
-    for match in re.finditer(r"\bctx\.rest\(", source):
+    # Whitespace between ``ctx``, the dot and ``rest`` is allowed on purpose: a
+    # call broken over lines is still a call, and a regex that only matched
+    # ``ctx.rest(`` on one line silently skipped every method chained onto a new
+    # line — a REST path the door does not serve would then pass unnoticed.
+    for match in re.finditer(r"\bctx\s*\.\s*rest\(", source):
         index = match.end()
         depth = 1
         while index < len(source) and depth:
