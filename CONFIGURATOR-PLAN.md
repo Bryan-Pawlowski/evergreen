@@ -209,29 +209,33 @@ A recipe is a small YAML file next to the template:
 id: altacv
 knobs:
   - id: accent
-    label: "Accent"
+    label: 'Accent'
     type: color
-    default: "#8F0D0D"
-    latex: '\definecolor{PastelRed}{HTML}{%s}'   # %s = hex, no leading '#'
+    default: '8F0D0D'
+    latex: '\definecolor{PastelRed}{HTML}{<<value>>}'   # hex, no leading '#'
   - id: body
-    label: "Body text"
+    label: 'Body text'
     type: color
-    default: "#666666"
-    latex: '\definecolor{LightGrey}{HTML}{%s}'
+    default: '666666'
+    latex: '\definecolor{LightGrey}{HTML}{<<value>>}'
   - id: name_size
-    label: "Name size"
+    label: 'Name size'
     type: enum
-    default: "Huge"
-    options: ["Huge", "LARGE", "large", "normalsize"]
-    latex: '\renewcommand{\namefont}{%s\rmfamily\bfseries}'
+    default: 'Huge'
+    options: ['Huge', 'LARGE', 'large', 'normalsize']
+    latex: '\renewcommand{\namefont}{<<value>>\rmfamily\bfseries}'
   - id: column_ratio
-    label: "Column split"
-    type: ratio
+    label: 'Column split'
+    type: number
     default: 0.6
-    min: 0.3
-    max: 0.8
-    latex: '\columnratio{%s}'
+    latex: '\columnratio{<<value>>}'
 ```
+
+> The placeholder is `<<value>>`, not `%s`. A brace-delimited form was
+> rejected during M1: LaTeX is full of braces, so a pattern like
+> `\titleformat{\section}{<<value>>\bfseries}` must be readable at a glance
+> or a template author cannot tell where the value goes. The shipped
+> `templates/plain/recipe.yaml` is the reference.
 
 Each knob names the **exact LaTeX line it replaces**. The generator applies a
 replacement and asserts the match count is exactly one — the same rule the
@@ -241,6 +245,94 @@ half-applied pass is the known failure mode.
 The recipe also declares, per knob, whether the base supports it. A base that
 cannot change its type size says so, and the form renders that control as
 disabled rather than pretending.
+
+### 3.2b Is a *recipe generator* part of this feature?
+
+**Answer: yes, and it is more valuable than the Configurator itself — but
+it is a different tool, and it is not a code generator.** It reads a
+template and *proposes* a recipe; a human decides which proposals are
+real.
+
+The question was asked during M1 and answered with measurement rather than
+opinion. The finding is that **detection is mechanical and semantics are
+not**, and the seam between those two is exactly where a generator earns
+its keep.
+
+Detection is easy. Scanning the four shipped templates for candidate
+settings finds:
+
+| template | colour literals | length literals | size literals | other |
+|---|---|---|---|---|
+| `plain` | 0 | 2 | 1 | — |
+| `yaac` | 1 | 2 | 0 | `\documentclass` options are class options (`red`), not values |
+| `altacv` | 5 | 0 | 1 | 8 `\colorlet`s deriving from the 5; 8 `\renewcommand` fonts |
+| `minimal` | 10 | 4 (3 literal) | 1 | **6 of the 10 colours are never referenced** |
+
+Every one of those 16 colour literals is a syntactically trivial find. A
+regex finds them all. So the *mechanical* half of a recipe generator is
+easy — and the *semantic* half is where the danger is, in three measured
+ways:
+
+1. **A colour knob can be a no-op.** `minimal`'s `Band`, `ColDark`,
+   `ColWash`, `Paper`, `Mist` and `GoldenEarth` are declared but never
+   referenced: the band and the dark column are **PNG images**
+   (`assets/banner.png`, `assets/colbg.png`), and the `\definecolor`
+   entries only document what the pixels already are. Measured: changing
+   `Band` from `1E2531` to `FF0000` produces a **byte-identical render** —
+   same fills, same images, same page count. A generator that offered
+   `Band` as a colour knob would ship a control that visibly does
+   nothing, which is worse than not offering it.
+
+2. **A derived colour is not a settable value.** `altacv`'s 8 `\colorlet`s
+   point at the 5 base colours. Setting `tagline` to a hex is not just
+   unusual — it is a **hard LaTeX error** (`\colorlet{tagline}{0000FF}`
+   fails to compile; xcolor wants a colour *name*). Only the 5 bases are
+   settable, and setting one moves the derived ones with it. Measured:
+   changing `PastelRed` moves exactly the 10 text spans that use it,
+   leaving the other 40 spans alone. The generator cannot know that
+   `PastelRed` is the right *unit* of choice; a human does.
+
+3. **A detected line is not always a settable line.** `yaac`'s
+   `\documentclass[letterpaper,localFont,alternative,red]` contains `red`,
+   a class *option* that selects a scheme, not a value. `minimal`'s
+   `\setlength{\baselineskip}{1.15\baselineskip}` contains a macro, so it
+   is not a length literal. And several lines appear **more than once**
+   (`altacv` has `\renewcommand{\familydefault}{\sfdefault}` twice;
+   `minimal` has 4 identical `\secheadrule` lines), which the
+   exactly-one-match rule rejects outright.
+
+So the generator's real job is not to find settings — it is to **propose
+candidates and flag the ones that are traps**, so the human spends their
+attention on the semantic judgement rather than on transcription.
+
+**Where it fits.** As a helper in the authoring path, not a runtime
+component:
+
+- `hermes career recipe <template>` — read a template, propose a
+  `recipe.yaml` skeleton with the mechanical candidates filled in, and
+  mark every candidate that needs a human decision (a colour that is
+  declared but unreferenced, a derived colour, a class option, a
+  non-literal value, an ambiguous line). The human edits the proposals
+  and the file is written.
+- This is what makes the plan's "the template author owns the recipe"
+  decision *practical*: today, authoring a recipe means hand-transcribing
+  LaTeX patterns, which is exactly the error-prone part. A generator that
+  transcribes and flags the traps removes the transcription and keeps the
+  judgement.
+
+**Where it does not fit.** The generator must not *write a recipe
+unattended*. Every trap above produces a recipe that is syntactically
+valid and semantically wrong, and the only defence is the human. A
+generator that emitted a finished recipe would ship controls that do
+nothing, derived colours that break the build, and class options treated
+as values.
+
+**Milestone.** M2, alongside the three remaining hand-written recipes. The
+generator is the tool that *writes* those three, so building it first is
+strictly better than writing them by hand and then automating the
+process. It also earns its keep on third-party templates in
+`templates.local/`, which is the case the plan's "the template author owns
+the recipe" decision was made for.
 
 ### 3.3 The payload
 
@@ -371,6 +463,13 @@ once, which is the same rule `plain` now demonstrates.
   line it replaces, including the `\colorlet` cascade in `altacv` and the
   eso-pic sidebar geometry in `minimal`. No `cv.tex` edit is needed for any
   of them, which was the point of the §3.1 revision.
+- `hermes career recipe <template>` — the **recipe generator** (§3.2b): read
+  a template, propose a `recipe.yaml` skeleton with the mechanical
+  candidates filled in, and flag the ones that need a human decision — a
+  colour that is declared but never referenced, a derived colour, a class
+  option, a non-literal value, an ambiguous line. It proposes; it does not
+  write. This is the tool that *authors* the three recipes above, so it
+  comes first in this milestone.
 - `hermes career generate --base <id> --id <new-id> [--set k=v …]` — the
   headless, scriptable entry point. It is also the agent-facing surface; a
   `career_configure` tool is added in the same pass, which means
