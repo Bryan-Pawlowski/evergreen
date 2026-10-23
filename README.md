@@ -55,6 +55,29 @@ Or from a local checkout:
 hermes plugins install /path/to/evergreen
 ```
 
+### The test channel
+
+`main` is the integration branch, and both branches carry the same four
+required checks, so a `main` tip has passed CI. What it has not been through is
+the install-and-drive pass a promotion gets, which is where the failures CI
+cannot see show up: a dependency missing on the plugin host, a backend still
+serving pre-install code. Run it in a throwaway profile, not the one you build
+CVs with:
+
+```bash
+hermes profile create evergreen-test        # once
+SHA=$(git ls-remote https://github.com/Bryan-Pawlowski/evergreen.git refs/heads/main | cut -f1)
+hermes -p evergreen-test plugins install Bryan-Pawlowski/evergreen --ref "$SHA" --force
+```
+
+`--ref` takes a full 40-character commit and nothing else, so a branch name or
+a tag is refused and the SHA has to be resolved first. A pinned install is
+immutable by design: `hermes plugins update` refuses it and prints the SHA it
+is held at along with the reinstall command, so moving to a newer `main` means
+running those last two lines again. An install into your active profile
+replaces the release copy there, so re-pin that profile to `stable` when you
+have finished testing.
+
 **Requirements:** Python 3.9+ and
 [`tectonic`](https://github.com/tectonic-typesetting/tectonic/releases) — a
 single static binary, no TeX distribution needed. If tectonic is missing,
