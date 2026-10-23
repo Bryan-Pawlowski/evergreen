@@ -11,6 +11,12 @@ dist/
 venv/
 env/
 
+# The dashboard half needs its no-op SPA entry in the repo: a manifest whose
+# `entry` file is absent makes the browser dashboard log a load failure on
+# every visit. Git will not re-include a file under an excluded directory, so
+# the directory itself is re-included first.
+!/dashboard/dist/
+
 # Test / tooling caches
 .pytest_cache/
 .mypy_cache/

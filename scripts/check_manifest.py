@@ -27,12 +27,14 @@ Exit 0 = ok, 1 = errors.
 
 from __future__ import annotations
 
+import json
 import re
 import sys
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 MANIFEST = REPO_ROOT / "plugin.yaml"
+DASHBOARD_DIR = REPO_ROOT / "dashboard"
 
 # The fields Hermes knows about (hermes_cli/plugins_manifest.py,
 # _KNOWN_MANIFEST_FIELDS). Unknown fields are forward-compat surface, so
@@ -85,6 +87,95 @@ def registered_tools() -> set[str]:
     for tool in getattr(evergreen, "TOOLS", []):
         names.add(tool["name"])
     return names
+
+
+def check_dashboard_half(name: str, version: str) -> tuple[list[str], list[str]]:
+    """The dashboard half's contract, as far as it can be checked without Hermes.
+
+    ``dashboard/manifest.json`` is what makes ``/api/plugins/<id>/`` exist at
+    all, and four of its fields are load-bearing in a way nothing else catches:
+
+    * ``name`` is the mount prefix *and* the id the desktop half calls with
+      ``ctx.rest``. Hermes mounts the routes at ``/api/plugins/<this name>/``;
+      if it drifts from ``plugin.yaml``'s name, the plugin's tools are called
+      "evergreen" while the HTTP door answers at another id, and every desktop
+      call 404s. The two ids must match.
+    * ``api`` must be a relative file inside ``dashboard/``. Hermes refuses an
+      absolute or escaping path and never mounts the routes — silently, from
+      the user's point of view.
+    * ``entry`` must exist. The *web* dashboard loads it as a script on every
+      visit; a missing file logs a load failure every time, even though the
+      desktop app never loads it.
+    * ``version`` should be the package's version, or the Capabilities page
+      reports something ``hermes plugins list`` does not.
+
+    Returns ``(errors, warnings)``. No ``dashboard/`` directory is not a
+    problem: a plugin may well have no HTTP door.
+    """
+    errors: list[str] = []
+    warnings: list[str] = []
+
+    if not DASHBOARD_DIR.is_dir():
+        return errors, warnings
+
+    manifest_path = DASHBOARD_DIR / "manifest.json"
+    if not manifest_path.is_file():
+        errors.append("dashboard/manifest.json: the dashboard/ directory exists but has no manifest")
+        return errors, warnings
+
+    try:
+        data = json.loads(manifest_path.read_text(encoding="utf-8-sig"))
+    except (OSError, json.JSONDecodeError) as exc:
+        errors.append(f"dashboard/manifest.json: does not parse: {exc}")
+        return errors, warnings
+    if not isinstance(data, dict):
+        errors.append("dashboard/manifest.json: must contain an object")
+        return errors, warnings
+
+    dash_name = str(data.get("name") or "")
+    if not dash_name:
+        errors.append("dashboard/manifest.json: name: required (it is the mount prefix)")
+    elif name and dash_name != name:
+        errors.append(
+            f"dashboard/manifest.json: name {dash_name!r} does not match "
+            f"plugin.yaml's {name!r}. The name is both the mount prefix "
+            f"(/api/plugins/<name>/) and the id the desktop half addresses, "
+            f"so the two must be the same."
+        )
+
+    dash_version = str(data.get("version") or "")
+    if dash_version and version and dash_version != version:
+        errors.append(
+            f"dashboard/manifest.json: version {dash_version!r} does not match "
+            f"plugin.yaml's {version!r}; the two halves are one package."
+        )
+
+    for field, default in (("api", None), ("entry", "dist/index.js")):
+        value = data.get(field, default)
+        if value is None:
+            continue
+        if not isinstance(value, str) or not value.strip():
+            errors.append(f"dashboard/manifest.json: {field}: must be a non-empty string")
+            continue
+        target = Path(value)
+        if target.is_absolute() or ".." in target.parts:
+            errors.append(
+                f"dashboard/manifest.json: {field}: {value!r} must be a relative "
+                f"path inside dashboard/ (Hermes refuses anything else)"
+            )
+            continue
+        if not (DASHBOARD_DIR / target).is_file():
+            errors.append(f"dashboard/manifest.json: {field}: {value!r} does not exist")
+
+    tab = data.get("tab")
+    if tab is not None and not isinstance(tab, dict):
+        errors.append("dashboard/manifest.json: tab: must be an object")
+    elif isinstance(tab, dict) and tab.get("path") and tab.get("hidden"):
+        warnings.append(
+            "dashboard/manifest.json: a hidden tab does not need a `path`; it adds no tab"
+        )
+
+    return errors, warnings
 
 
 def main() -> int:
@@ -150,6 +241,13 @@ def main() -> int:
         errors.append(f"provides_tools: {tool!r} is registered but not declared")
     for tool in sorted(unprovided):
         errors.append(f"provides_tools: {tool!r} is declared but not registered")
+
+    # The dashboard half, if this plugin has one. Its manifest decides whether
+    # `/api/plugins/<id>/` exists at all, and its name is the id the desktop
+    # half calls — so a drift here is a door that answers at another address.
+    dashboard_errors, dashboard_warnings = check_dashboard_half(name, version)
+    errors.extend(dashboard_errors)
+    warnings.extend(dashboard_warnings)
 
     for warning in warnings:
         print(f"WARN  {warning}")
