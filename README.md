@@ -179,6 +179,55 @@ The YaAC and AltaCV classes and the OFL/Apache-licensed fonts are vendored
 under `templates/`, so a build is reproducible on any machine with no
 system font installation and no TeX distribution.
 
+## The Configurator (desktop pane)
+
+The Hermes desktop app can show the Configurator as a pane docked on the right:
+pick a base template, set the knobs its `recipe.yaml` exposes, watch a schematic
+preview follow the values, generate a template directory in `templates.local/`,
+and build the PDF — with the real page count and overfull-box count coming back
+from tectonic.
+
+It is the same feature the CLI and the HTTP door expose (`hermes career recipe`,
+`author`, `generate`, and `/api/plugins/evergreen/`), so none of them can drift
+from the others: the form is generated from the recipe the backend returns, and
+every request goes to the plugin's own routes.
+
+**It ships switched off.** A plugin's desktop half runs inside the app window, so
+it is opt-in like every other:
+
+1. Put the plugin where the app can see it — `~/.hermes/plugins/evergreen/`,
+   where `hermes plugins install` puts it.
+2. In the app, open **Capabilities → Plugins** and turn **Evergreen
+   Configurator** on. It inventories there even while off.
+3. Open it from the command palette (⌘K / Ctrl+K) → **Configurator**, or the
+   pane's own tab.
+
+**Choosing a workspace.** The pane lists the career workspaces under the Hermes
+home plus the one `plugins.entries.evergreen.settings.workspace_path` names. A
+workspace anywhere else — including the hand-maintained tree this repo was built
+alongside — is addressed by its **path**, in the field below the list. The
+backend refuses to guess a workspace from the server's working directory, so a
+path is the only honest way to name one.
+
+**Generating needs a recipe.** A base template is configurable only when it
+carries a `recipe.yaml`, and the shipped templates deliberately carry none. Author
+one with `hermes career author <template> --path <template dir>`: it proposes,
+proves each setting with a render, and writes only what survived.
+
+**Working on the pane.** The app loads a *copy* at
+`~/.hermes/desktop-plugins/evergreen/plugin.js`, refreshed by Rescan, an
+install/update, or a restart — editing `plugins/evergreen/desktop/plugin.js` in
+place does nothing on screen. Link a checkout instead
+(`ln -s <checkout> ~/.hermes/plugins/evergreen`) and every save re-syncs and
+hot-reloads it.
+
+The gate is `python scripts/check_desktop_plugin.py`: the SDK-surface lint (a
+port of the one inside `hermes plugins validate`, which CI cannot run), the
+package contract, a syntax check — and the check that keeps the two halves
+honest, that **every `ctx.rest()` path the pane calls is a route the backend
+serves**. `python scripts/test_desktop_lint_teeth.py` proves each of those rules
+can fail.
+
 ## Architecture
 
 ```
@@ -203,6 +252,8 @@ evergreen/
 │   ├── manifest.json
 │   ├── plugin_api.py
 │   └── dist/index.js           no-op SPA entry (there is no browser tab)
+├── desktop/
+│   └── plugin.js               the Configurator pane (opt-in; desktop app only)
 ├── skills/
 │   ├── evergreen-career/       the workflow
 │   └── evergreen-cvcraft/      the LaTeX craft
