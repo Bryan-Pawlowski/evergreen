@@ -214,6 +214,13 @@ carries a `recipe.yaml`, and the shipped templates deliberately carry none. Auth
 one with `hermes career author <template> --path <template dir>`: it proposes,
 proves each setting with a render, and writes only what survived.
 
+Proving a setting compares the rendered **pixels**, so authoring needs
+**PyMuPDF** (`python -m pip install pymupdf`). Without it, `hermes career author`
+still writes the recipe but reports `"proven": false` with
+`"why": "pymupdf is not installed"` and keeps every proposal — honest about it,
+but you get the unproven set instead of the settings that actually change the
+page.
+
 **A generated template is configurable too.** The base's recipe travels into the
 new directory, re-pointed at the new `cv.tex`, with each knob starting from the
 value it was built with — so `wide` can be re-opened as a base and tweaked again,
