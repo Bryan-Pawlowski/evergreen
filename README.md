@@ -193,11 +193,21 @@ evergreen/
 │   ├── render.py               template discovery + slot substitution
 │   ├── build.py                tectonic compile + the build report
 │   ├── workspace.py            intake checklist, raw ingest, template listing
-│   └── selftest.py             the end-to-end test
+│   ├── recipe.py               a template's settings, and how they are applied
+│   ├── generate.py             settings -> a new template directory
+│   ├── propose.py              the recipe generator: propose, and flag the traps
+│   ├── liveness.py             does changing one setting change the page?
+│   ├── selftest.py             the end-to-end test
+│   └── test_*.py               the recipe seam, the generator, the HTTP door
+├── dashboard/                  the HTTP door, mounted at /api/plugins/evergreen/
+│   ├── manifest.json
+│   ├── plugin_api.py
+│   └── dist/index.js           no-op SPA entry (there is no browser tab)
 ├── skills/
 │   ├── evergreen-career/       the workflow
 │   └── evergreen-cvcraft/      the LaTeX craft
-├── schema/career.schema.json
+├── schema/                     career, recipe, settings
+├── scripts/                    the CI gates
 └── templates/
 ```
 
