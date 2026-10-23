@@ -205,6 +205,34 @@ def slots_in(template: Template) -> list[str]:
     return seen
 
 
+# The dialect's own column switch: the point after which a two-column template
+# renders into its second column.
+SWITCH_COLUMN_RE = re.compile(r"\\switchcolumn\b")
+
+
+def slot_columns(template: Template) -> dict[str, list[str]]:
+    """Which column each slot lands in, for a preview of the page.
+
+    The boundary is the template's own ``\\switchcolumn``: a slot marker before
+    it renders into the first column, one after it into the second. A
+    single-column template has no switch, so every slot is in ``left``.
+
+    This is read from the source rather than inferred from the slot names
+    because the assignment is the template's, not the dialect's: the same
+    dialect can carry a different set of sections per column.
+    """
+    boundary = SWITCH_COLUMN_RE.search(template.source)
+    split = boundary.start() if boundary else None
+    left: list[str] = []
+    right: list[str] = []
+    for m in SLOT_RE.finditer(template.source):
+        name = m.group("name")
+        target = left if split is None or m.start() < split else right
+        if name not in target:
+            target.append(name)
+    return {"left": left, "right": right}
+
+
 # --------------------------------------------------------------------------
 # Build staging
 # --------------------------------------------------------------------------

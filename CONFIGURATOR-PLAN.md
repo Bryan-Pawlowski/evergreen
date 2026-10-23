@@ -569,19 +569,30 @@ silently apply nothing. That is a loud error now, and a refusal writes nothing.
 
 ### 3.5 The preview
 
-The user chose a fast schematic preview over a live PDF. It is honest about
-what it is and is drawn **client-side** from the recipe plus the chosen values,
-so it updates instantly with no backend round trip:
+The user chose a fast schematic preview over a live PDF. It is drawn
+**client-side** from the recipe plus the chosen values, so it updates instantly
+with no backend round trip — and it is specific rather than generic:
 
-- a page rectangle with the column split drawn at the template's real ratio
-- colour swatches for every colour knob
-- a type-scale bar for every size knob
-- the list of slots the template uses
+- a page at the template's real paper colour (a template that declares none
+  renders black on white, and the door says so as data, not as a literal),
+- the header: the profile's own name, tagline and contact line,
+- a page rectangle with the column split drawn at the template's real ratio,
+- one block per slot, carrying that slot's **real heading and the opening line
+  of each of its entries**, in the column the template's own `\switchcolumn`
+  puts it in,
+- every colour knob applied to the role it drives (heading, accent, body,
+  rule, panel, page), so a changed colour is visible as a changed page,
+- colour swatches and a type-scale bar per size knob, under the page.
 
-It is a **schematic, not a render**. It does not attempt to place content, and
-the pane labels it as such. The truth is the "Build PDF" button, which runs
-the real tectonic build and reports the plugin's existing page count and
-overfull-box count.
+The wording is the one thing a client-side drawing cannot invent, so
+`GET /preview` supplies it: section titles from the dialect's own vocabulary,
+entries and column assignment from the workspace's `career.yaml` and the
+template's source. The pane still draws, so typing a colour costs no round trip.
+
+It is a **schematic, not a render**. It places no LaTeX and cannot promise a
+page count; the pane labels it as such. The truth is the "Build PDF" button,
+which runs the real tectonic build and reports the plugin's existing page count
+and overfull-box count.
 
 ### 3.6 The surface
 
@@ -737,7 +748,7 @@ sets, the dialect's copy wins and the knob is a no-op.
   desktop id, so the two cannot drift), `api: plugin_api.py`, `entry:
   dist/index.js`, and a **hidden** tab (`tab.hidden`), because the Configurator
   is a desktop pane, not a page in the web dashboard.
-- `dashboard/plugin_api.py` — the four routes. Every handler is a thin wrapper
+- `dashboard/plugin_api.py` — the five routes. Every handler is a thin wrapper
   over the plugin's own Python (`career_build`, `generate_template`,
   `load_recipe`, `discover_templates`), so the door and `hermes career ...`
   cannot drift. Handlers are plain `def`, not `async def`: FastAPI runs them in
@@ -877,9 +888,19 @@ served process found `~/.local/bin/tectonic.EXE` and built in 1.5 s.
   has no name to offer. The value is remembered.
 - **The schematic preview is drawn client-side** from the values: a page
   rectangle at the chosen `*ratio*` knob's split (or one column), a swatch per
-  colour knob, a proportional bar per size knob, and the template's slots. It is
-  labelled "Schematic, not a render" in the pane, because the truthful answer is
-  the build.
+  colour knob, a proportional bar per size knob. It is labelled "Schematic, not
+  a render" in the pane, because the truthful answer is the build.
+- **The sketch stopped being generic.** It drew anonymous grey bars, which is
+  honest and useless: a colour that failed looked exactly like a colour that
+  worked, and the drawing said nothing about which section a change moved. So
+  `GET /preview` supplies what a client cannot invent — the profile's name,
+  tagline and contact line, a real heading per slot, the opening line of each
+  entry, and how many bullets follow it — and the pane paints every colour knob
+  onto the role the knob's *own description* names ("also drives: body"),
+  falling back to its id. The column a section lands in is read from the
+  template's own `\switchcolumn`, not guessed from the dialect, and paper/ink
+  fall back to LaTeX's own black-on-white as data from the door rather than a
+  colour literal in the pane (the desktop gate forbids those, and rightly).
 - **Generate and Build PDF call `ctx.rest`** with the door's own shapes —
   `{base, id, name, workspace, settings}` and `{template, workspace}` — and the
   build gets a 180 s timeout, since a tectonic compile is seconds to a minute.

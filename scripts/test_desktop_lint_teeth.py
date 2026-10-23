@@ -128,10 +128,15 @@ def main() -> int:
         ("no palette command", "area: PALETTE_AREA", "area: 'statusBar.left'"),
         ("pane without a width", "width: '420px'", "width: undefined"),
         ("a disallowed import", "from 'react/jsx-runtime'", "from 'lodash-es'"),
-        ("a hardcoded colour", "style: { height: '2px', opacity: 0.55 }",
-         "style: { height: '2px', opacity: 0.55, color: '#ff0000' }"),
+        ("a hardcoded colour", "style: { display: 'flex', flexDirection: 'column', gap: '2px' }",
+         "style: { display: 'flex', flexDirection: 'column', gap: '2px', color: '#ff0000' }"),
         ("a REST path the door does not serve",
          "ctx.rest('/workspaces')", "ctx.rest('/workspace')"),
+        # The same rule, on a call the file breaks over two lines: the path is
+        # still a path, so a matcher anchored on ``ctx.rest(`` alone would let
+        # this one through.
+        ("a REST path broken over lines",
+         "ctx\n      .rest('/preview'", "ctx\n      .rest('/previews'"),
         ("a REST method the door does not serve",
          "  const generate = async () => {",
          "  const generate = async () => {\n    await ctx.rest('/generate')"),

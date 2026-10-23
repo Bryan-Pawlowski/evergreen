@@ -16,9 +16,12 @@
  *
  * 2. **The preview is a schematic, and says so.** It is drawn client-side from
  *    the values (a page rectangle at the chosen column ratio, a swatch per
- *    colour knob, a bar per size knob), so it updates with no round trip. It
- *    cannot know what the page will look like — the truthful check is "Build
- *    PDF", which returns the real page count and overfull-box count.
+ *    colour knob, a bar per size knob), so typing a colour updates the drawing
+ *    with no round trip. What it cannot invent — the profile's name and
+ *    tagline, each section's heading, the opening line of each entry, and which
+ *    column a slot lands in — comes from `GET /preview`. It still cannot know
+ *    what the page will look like: the truthful check is "Build PDF", which
+ *    returns the real page count and overfull-box count.
  *
  * 3. **The workspace is chosen, never guessed.** `GET /workspaces` names the
  *    workspaces under the Hermes home and the one the operator configured; a
@@ -106,9 +109,16 @@ function describeError(error) {
   return status && !message.includes(String(status)) ? message + ' (HTTP ' + status + ')' : message
 }
 
-function query(workspace) {
+function query(workspace, template) {
+  const parts = []
   const text = (workspace || '').trim()
-  return text ? '?workspace=' + encodeURIComponent(text) : ''
+  if (text) {
+    parts.push('workspace=' + encodeURIComponent(text))
+  }
+  if (template) {
+    parts.push('template=' + encodeURIComponent(template))
+  }
+  return parts.length > 0 ? '?' + parts.join('&') : ''
 }
 
 function savedState(ctx) {
@@ -139,9 +149,19 @@ function clamp(value, low, high) {
 }
 
 function sizeStep(value) {
-  const text = String(value ?? '').trim()
+  // A size knob holds a LaTeX command (`\Huge`, `\footnotesize`), so the
+  // backslash has to come off before the name is looked up — otherwise every
+  // \command falls through to the neutral 1 and every bar comes out the same
+  // length, which is a drawing that says nothing.
+  const text = String(value ?? '').trim().replace(/^\\/, '')
+  // Exact name first: the table distinguishes `large`/`Large`/`LARGE`, and a
+  // case-insensitive lookup alone would answer \LARGE with large's step.
   if (text in SIZE_STEPS) {
     return SIZE_STEPS[text]
+  }
+  const key = Object.keys(SIZE_STEPS).find(name => name.toLowerCase() === text.toLowerCase())
+  if (key) {
+    return SIZE_STEPS[key]
   }
   const number = Number(text)
   return Number.isFinite(number) && number > 0 ? clamp(number, 0.5, 4) : 1
@@ -155,91 +175,412 @@ function isSizeKnob(knob) {
 // The schematic preview
 // ---------------------------------------------------------------------------
 
+// Which role a colour knob plays on the page. A recipe's own description names
+// the roles a colour drives ("also drives: body") — that is the generator's
+// measurement, so it wins; failing that the id and label name it. Ordered, and
+// the first match wins, because one word can fit two roles ("LightGrey" is a
+// body colour, not a secondary one).
+const COLOUR_ROLES = [
+  ['panel', /wash|sidebar|panel/],
+  ['page', /paper|page|background/],
+  ['rule', /headingrule|rule|gold/],
+  ['strong', /emphasis/],
+  // `\bheading\b` on purpose: "subheading" is an accent role, and a looser
+  // match made PastelRed claim the heading colour as well as the accent one.
+  ['head', /\bheading\b|headline|namefont/],
+  ['accent', /accent|subheading|tagline/],
+  ['secondary', /soft|muted|secondary/],
+  ['body', /body|ink|text|grey|gray|slate/]
+]
+
+function roleOf(knob) {
+  const words = String(knob.description || '') + ' ' + knob.id + ' ' + String(knob.label || '')
+  const text = words.toLowerCase()
+  for (const [role, pattern] of COLOUR_ROLES) {
+    if (pattern.test(text)) {
+      return role
+    }
+  }
+  return null
+}
+
+function hexOf(knob, values) {
+  return '#' + String(values[knob.id] ?? knob.default).replace(/^#/, '')
+}
+
+/** role → the colour chosen for it, and which knob won it. */
+function colourRoles(knobs, values) {
+  const roles = {}
+  const owners = {}
+  for (const knob of knobs) {
+    if (knob.type !== 'color') {
+      continue
+    }
+    const role = roleOf(knob)
+    if (role && !roles[role]) {
+      roles[role] = hexOf(knob, values)
+      owners[role] = knob.id
+    }
+  }
+  return { roles, owners }
+}
+
+/** What to call a slot when there is no profile to name it. */
+function slotTitle(slot) {
+  const name = String(slot).startsWith('section:') ? String(slot).slice(8) : String(slot)
+  return name.replace(/[-_]+/g, ' ').replace(/^./, letter => letter.toUpperCase())
+}
+
 /**
- * A sketch of the page: the column split at the chosen ratio, a swatch per
- * colour knob, a bar per size knob, and the slots the template fills.
+ * A page-shaped sketch: the header, one block per slot carrying that slot's
+ * real heading and the opening of its entries, painted with the chosen
+ * colours.
  *
- * It is labelled as a schematic in the UI. Claiming otherwise would be a lie a
- * user acts on — the real answer comes from a build.
+ * Three facts make it specific rather than generic, and each comes from the
+ * place that owns it: the wording and section titles from the workspace's own
+ * profile (via `/preview`), which column a section lands in from the template's
+ * own `\switchcolumn` (via `slot_columns`), and the colours from the knobs. It
+ * is still labelled a sketch, because only a build shows the real page — and a
+ * user who believes otherwise makes decisions on a drawing.
  */
-function Schematic({ template, knobs, values }) {
+function Schematic({ template, knobs, values, preview }) {
   const ratioKnob = knobs.find(
     knob => knob.type === 'number' && /ratio|split|column/i.test(knob.id + ' ' + knob.label)
   )
   const colours = knobs.filter(knob => knob.type === 'color')
   const sizes = knobs.filter(isSizeKnob)
+  const { roles, owners } = colourRoles(knobs, values)
+  // The page's own colours, not the app's: a CV is drawn on paper, and a
+  // template that declares no page or body colour renders black on white. The
+  // door sends those two as data, so nothing here hardcodes a colour, and a
+  // knob that DOES declare them still wins.
+  const defaults = (preview && preview.defaults) || {}
+  const defaultHex = (key, fallback) =>
+    defaults && typeof defaults[key] === 'string' && defaults[key]
+      ? '#' + String(defaults[key]).replace(/^#/, '')
+      : fallback
+  const paper = roles.page || defaultHex('paper', 'var(--ui-bg-primary)')
+  const ink = roles.body || defaultHex('ink', 'var(--ui-text-primary)')
+  const head = roles.head || ink
+  const strong = roles.strong || head
+  const soft = roles.secondary || ink
+  const accent = roles.accent || soft
+  const panel = roles.panel || null
+  // A template that declares no rule colour still has section rules; drawn in
+  // the body colour at low weight rather than invented in a colour of its own.
+  const rule = roles.rule || null
 
-  const columns = Number(template.columns) || 1
+  const columns = Number((preview && preview.columns) || template.columns) || 1
   const twoColumn = columns > 1 || ratioKnob !== undefined
-  const ratio = ratioKnob
-    ? clamp(values[ratioKnob.id] ?? ratioKnob.default, 0.2, 0.85)
-    : 0.6
+  const drawnRatio = ratioKnob ? Number(values[ratioKnob.id] ?? ratioKnob.default) : 0.6
+  const ratio = clamp(drawnRatio, 0.2, 0.85)
+  const ratioClamped = Number.isFinite(drawnRatio) && Math.abs(drawnRatio - ratio) > 0.0001
 
-  const fill = index =>
+  const header = (preview && preview.header) || null
+  const sections = preview && (preview.sections || []).length > 0
+    ? preview.sections
+    : (template.slots || [])
+        .filter(slot => slot !== 'identity')
+        .map(slot => ({ slot, title: slotTitle(slot), column: 'left', entries: [] }))
+
+  // A size knob naming the name or heading font scales the sketch's header, so
+  // "what does a bigger name look like" is answered here rather than later.
+  const nameKnob = knobs.find(
+    knob => isSizeKnob(knob) && /name|heading|title/i.test(knob.id + ' ' + knob.label)
+  )
+  const nameScale = nameKnob
+    ? clamp(sizeStep(values[nameKnob.id] ?? nameKnob.default), 0.6, 1.6)
+    : 1
+
+  const bar = (width, key) =>
     jsx(
       'div',
       {
-        className: 'rounded-[1px] bg-(--ui-stroke-secondary)',
-        style: { height: '2px', opacity: 0.55 }
+        style: {
+          height: '2px',
+          width,
+          borderRadius: '1px',
+          background: ink,
+          opacity: 0.5
+        }
       },
-      index
+      key
     )
 
-  const column = (count, label) =>
+  const entryBlock = (entry, key) =>
     jsxs(
       'div',
       {
-        className: 'flex flex-col gap-[5px]',
-        children: Array.from({ length: count }, (_, index) => fill(index))
+        style: { display: 'flex', flexDirection: 'column', gap: '1px' },
+        children: [
+          entry.headline
+            ? jsx('div', {
+                style: {
+                  fontSize: '5.4px',
+                  fontWeight: 600,
+                  lineHeight: 1.25,
+                  color: strong
+                },
+                children: entry.headline
+              })
+            : null,
+          entry.meta
+            ? jsx('div', {
+                style: {
+                  fontSize: '4.8px',
+                  lineHeight: 1.2,
+                  color: soft,
+                },
+                children: entry.meta
+              })
+            : null,
+          entry.detail
+            ? jsx('div', {
+                style: {
+                  fontSize: '4.8px',
+                  lineHeight: 1.35,
+                  color: ink,
+                  display: '-webkit-box',
+                  WebkitLineClamp: 2,
+                  WebkitBoxOrient: 'vertical',
+                  overflow: 'hidden'
+                },
+                children: entry.detail
+              })
+            : null,
+          // The bullets the quoted line is the first of, drawn as bars: the
+          // height an entry takes is a real fact about the page, and inventing
+          // four lines of prose for a 5px font would be worse than a bar.
+          ...Array.from({ length: Math.min(Number(entry.more) || 0, 2) }, (_, index) =>
+            bar(['92%', '78%'][index] || '80%', key + ':more' + index)
+          )
+        ]
       },
-      label
+      key
     )
+
+  const sectionBlock = section => {
+    const entries = section.entries || []
+    return jsxs(
+      'div',
+      {
+        style: { display: 'flex', flexDirection: 'column', gap: '2px' },
+        children: [
+          jsx('div', {
+            style: {
+              fontSize: '6px',
+              fontWeight: 700,
+              letterSpacing: '0.07em',
+              textTransform: 'uppercase',
+              lineHeight: 1.2,
+              color: head,
+            },
+            children: section.title
+          }),
+          jsx('div', {
+            style: {
+              height: '1px',
+              background: rule || ink,
+              opacity: rule ? 0.9 : 0.3
+            }
+          }),
+          jsx('div', {
+            style: {
+              display: 'flex',
+              flexDirection: 'column',
+              gap: '3px',
+              marginTop: '1px'
+            },
+            children:
+              entries.length > 0
+                ? entries.map((entry, index) => entryBlock(entry, section.slot + ':' + index))
+                : [
+                    bar('82%', section.slot + ':b0'),
+                    bar('64%', section.slot + ':b1'),
+                    bar('71%', section.slot + ':b2')
+                  ]
+          })
+        ]
+      },
+      section.slot
+    )
+  }
+
+  const headerBlock = jsxs('div', {
+    style: {
+      display: 'flex',
+      flexDirection: 'column',
+      gap: '2px',
+      padding: '11px 13px 5px'
+    },
+    children: [
+      jsx('div', {
+        style: {
+          fontSize: Math.round(12 * nameScale) + 'px',
+          fontWeight: 700,
+          lineHeight: 1.1,
+          letterSpacing: '0.01em',
+          color: head,
+        },
+        children: header && header.name ? header.name : 'Your Name'
+      }),
+      header && header.tagline
+        ? jsx('div', {
+            style: {
+              fontSize: '5.6px',
+              lineHeight: 1.3,
+              color: accent,
+            },
+            children: header.tagline
+          })
+        : null,
+      header && (header.contact || []).length > 0
+        ? jsx('div', {
+            style: {
+              fontSize: '5px',
+              lineHeight: 1.3,
+              color: soft,
+            },
+            children: header.contact.join('   ·   ')
+          })
+        : null,
+      jsx('div', {
+        style: {
+          height: '1.5px',
+          marginTop: '4px',
+          background: rule || ink,
+          opacity: rule ? 0.9 : 0.3
+        }
+      })
+    ]
+  })
+
+  const columnOf = side =>
+    sections
+      .filter(section => (section.column || 'left') === side)
+      .map(section => sectionBlock(section))
+
+  const page = jsxs('div', {
+    style: {
+      display: 'flex',
+      flexDirection: 'column',
+      aspectRatio: '8.5 / 11',
+      width: '100%',
+      border: '1px solid var(--ui-stroke-secondary)',
+      borderRadius: '3px',
+      overflow: 'hidden',
+      background: paper,
+      color: ink
+    },
+    children: [
+      headerBlock,
+      twoColumn
+        ? jsxs('div', {
+            style: {
+              display: 'flex',
+              flex: 1,
+              minHeight: 0,
+              gap: '8px',
+              padding: '5px 12px 12px'
+            },
+            children: [
+              jsx('div', {
+                style: {
+                  width: Math.round(ratio * 100) + '%',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: '7px',
+                  padding: '7px 6px',
+                  borderRadius: '2px',
+                  background: panel || 'transparent',
+                  overflow: 'hidden'
+                },
+                children: columnOf('left')
+              }),
+              jsx('div', {
+                style: {
+                  flex: 1,
+                  minWidth: 0,
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: '7px',
+                  overflow: 'hidden'
+                },
+                children: columnOf('right')
+              })
+            ]
+          })
+        : jsx('div', {
+            style: {
+              display: 'flex',
+              flex: 1,
+              minHeight: 0,
+              flexDirection: 'column',
+              gap: '7px',
+              padding: '5px 13px 12px',
+              overflow: 'hidden'
+            },
+            children: columnOf('left')
+          })
+    ]
+  })
+
+  const workspaceName =
+    preview && preview.workspace && preview.workspace.name ? preview.workspace.name : null
+  const splitText = twoColumn
+    ? `the split is drawn at ${Math.round(ratio * 100)}% / ${Math.round((1 - ratio) * 100)}%` +
+      (ratioClamped ? ` (the knob says ${String(drawnRatio)}, so it is clamped)` : '')
+    : 'one column, no split to draw'
+  const wordingText = workspaceName
+    ? 'sections and wording from ' + workspaceName
+    : 'placeholder lines, because no profile could be read'
 
   return jsxs('div', {
     className: 'flex flex-col gap-2',
     children: [
-      jsx('div', {
-        className: 'rounded-[3px] border border-(--ui-stroke-secondary) p-2',
-        style: { aspectRatio: '8.5 / 11' },
-        children: twoColumn
-          ? jsxs('div', {
-              className: 'flex h-full gap-2',
-              children: [
-                jsx('div', {
-                  className: 'rounded-[1px] bg-(--ui-bg-tertiary) p-1.5',
-                  style: { width: Math.round(ratio * 100) + '%' },
-                  children: column(10, 'left')
-                }),
-                jsx('div', { className: 'flex-1 p-1', children: column(14, 'right') })
-              ]
-            })
-          : jsx('div', { className: 'h-full p-1', children: column(16, 'single') })
-      }),
+      page,
       jsx('div', {
         className: 'text-[0.6875rem] leading-4 text-(--ui-text-quaternary)',
-        children: twoColumn
-          ? `Schematic, not a render: the split is drawn at ${Math.round(ratio * 100)}% / ${Math.round((1 - ratio) * 100)}%.`
-          : 'Schematic, not a render: one column, no split to draw.'
+        children: `Schematic, not a render: ${splitText}; ${wordingText}.`
       }),
+      preview && preview.wording_error
+        ? jsx('div', {
+            className: 'text-[0.6875rem] leading-4 text-(--ui-text-tertiary)',
+            children: 'No wording: ' + preview.wording_error
+          })
+        : null,
       colours.length > 0
         ? jsx('div', {
             className: 'flex flex-wrap items-center gap-1.5',
-            children: colours.map(knob =>
-              jsxs(
+            children: colours.map(knob => {
+              const role = roleOf(knob)
+              // Only the knob that actually paints the role is labelled with
+              // it: two colours can name the same role (minimal's RuleGold and
+              // GoldenEarth both read as a rule), and a legend that claims a
+              // role for a colour the drawing never uses is a lie about the
+              // page.
+              const painted = role && owners[role] === knob.id ? role : null
+              return jsxs(
                 'span',
                 {
                   className: 'inline-flex items-center gap-1 text-[0.6875rem] text-(--ui-text-tertiary)',
                   children: [
                     jsx('span', {
                       className: 'size-3 rounded-[2px] border border-(--ui-stroke-secondary)',
-                      style: { backgroundColor: '#' + String(values[knob.id] ?? knob.default).replace(/^#/, '') }
+                      style: { backgroundColor: hexOf(knob, values) }
                     }),
-                    jsx('span', { children: knob.label })
+                    jsx('span', { children: knob.label }),
+                    painted
+                      ? jsx('span', {
+                          className: 'text-(--ui-text-quaternary)',
+                          children: painted
+                        })
+                      : null
                   ]
                 },
                 knob.id
               )
-            )
+            })
           })
         : null,
       sizes.length > 0
@@ -267,22 +608,6 @@ function Schematic({ template, knobs, values }) {
                   ]
                 },
                 knob.id
-              )
-            )
-          })
-        : null,
-      (template.slots || []).length > 0
-        ? jsx('div', {
-            className: 'flex flex-wrap gap-1',
-            children: template.slots.map(slot =>
-              jsx(
-                Badge,
-                {
-                  variant: 'outline',
-                  className: 'text-[0.625rem] leading-4',
-                  children: slot
-                },
-                slot
               )
             )
           })
@@ -392,6 +717,13 @@ function ConfiguratorPane({ ctx }) {
   const [generated, setGenerated] = useState(restored.generated || null)
   const [built, setBuilt] = useState(null)
 
+  // What the sketch draws: the workspace's own headings and opening lines, and
+  // the template's column assignment. Held apart from the catalog because it is
+  // per-template wording, not per-template settings, and it is refreshed by the
+  // same Reload that re-reads the catalog.
+  const [preview, setPreview] = useState(null)
+  const [previewNonce, setPreviewNonce] = useState(0)
+
   // Remember the form across a reload, a hot edit, or a pane close. This is the
   // "the settings survive a round trip" property: the pane reopens showing what
   // was typed, not the template's defaults.
@@ -434,6 +766,35 @@ function ConfiguratorPane({ ctx }) {
   const selected = bases.find(row => row.id === base) || bases[0] || null
   const effective = selected ? valuesFor(selected.recipe, values) : {}
   const tectonic = catalog ? catalog.tectonic : null
+  const selectedId = selected ? selected.id : ''
+
+  // The sketch's wording is per (workspace, template), not per setting: typing a
+  // colour must not cost a round trip, but picking another base or workspace
+  // must. A failed preview is recorded rather than raised — a sketch with
+  // placeholder lines is still worth drawing, and the form must not blank.
+  useEffect(() => {
+    if (!selectedId) {
+      setPreview(null)
+      return undefined
+    }
+    let cancelled = false
+    setPreview(null)
+    ctx
+      .rest('/preview' + query(workspace, selectedId))
+      .then(data => {
+        if (!cancelled) {
+          setPreview(data)
+        }
+      })
+      .catch(error => {
+        if (!cancelled) {
+          setPreview({ ok: false, header: null, sections: [], wording_error: describeError(error) })
+        }
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [ctx, workspace, selectedId, previewNonce])
 
   const chooseBase = id => {
     setBase(id)
@@ -516,7 +877,10 @@ function ConfiguratorPane({ ctx }) {
         variant: 'ghost',
         size: 'xs',
         disabled: loading || busy !== null,
-        onClick: () => reload(),
+        onClick: () => {
+          reload()
+          setPreviewNonce(current => current + 1)
+        },
         children: 'Reload'
       })
     ]
@@ -652,7 +1016,12 @@ function ConfiguratorPane({ ctx }) {
               )
             }),
             jsx(Separator, { className: 'my-1' }),
-            jsx(Schematic, { template: selected, knobs: selected.recipe.knobs || [], values: effective })
+            jsx(Schematic, {
+              template: selected,
+              knobs: selected.recipe.knobs || [],
+              values: effective,
+              preview
+            })
           ]
         })
       : null
