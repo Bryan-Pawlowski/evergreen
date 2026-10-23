@@ -301,9 +301,112 @@ ways:
    `minimal` has 4 identical `\secheadrule` lines), which the
    exactly-one-match rule rejects outright.
 
+4. **A template's own line can be overridden by the dialect.** The
+   `plain` template sets its bullet spacing in `\setlist`, and the
+   `plain` dialect *also* wrote `\itemsep2pt` inline inside
+   `\begin{itemize}` — the dialect's copy won, and the template's line
+   was dead. This one is the nastiest because the line looks perfectly
+   settable and the LaTeX reads correctly; the knob was accepted, the
+   generation succeeded, and the rendered PDF was byte-identical. It
+   was found by the per-knob liveness check, not by reading the LaTeX.
+   The generator cannot see this class of trap at all — it requires
+   knowing what the *renderer* emits.
+
+5. **A template's own line can be overridden by the *class*.** The
+   `yaac` template declares `\definecolor{basecolor}{HTML}{8F0D0D}` and
+   says in its own comment that changing the hex re-brands the CV. It
+   does not. The vendored class does `\colorlet{linkcolor}{basecolor}`
+   **at load time**, so the class's own `red` value (`b30000`) was
+   already frozen into `linkcolor` before the template's
+   `\definecolor` ran. Measured: the template's `8F0D0D` appeared
+   **nowhere** in the rendered PDF, and changing it to anything else
+   changed nothing — the class's `b30000` was what rendered. Fixed by
+   re-deriving the class's three derived colours after the template's
+   `\definecolor`; the template's hex now renders, and a `basecolor`
+   knob is live. **That fix lives in the workspace, not the repo**
+   (§3.2d) — a colour change to a shipped template reaches every
+   installer. The generator cannot see this class of trap either: it
+   requires reading the vendored class file, and the class's
+   *load-time* ordering is the whole mechanism.
+
+   The general lesson: **a setting's value can be overridden by
+   anything loaded before it** — the dialect, the class, or a package.
+   A recipe names a line; the line is not necessarily the one that wins.
+
 So the generator's real job is not to find settings — it is to **propose
 candidates and flag the ones that are traps**, so the human spends their
 attention on the semantic judgement rather than on transcription.
+
+### 3.2d The boundary: the repo ships the mechanism, the workspace ships the taste
+
+> **Decided after the M1 audit.** The audit found two defects in the
+> *shipped* templates — `yaac`'s accent colour never reaching the page,
+> and the `plain` dialect overriding its own template's bullet spacing.
+> Both were fixed in the repo first. That was wrong: the plugin repo is
+> the distribution channel, and a colour change or a renderer change
+> there reaches every installer, not just this workspace. **The repo
+> carries the mechanism; the workspace carries the choices.**
+
+Concretely, the repo contains:
+
+- the recipe engine, the generator, the schemas, the tests, and the CI
+  gates — the *capability*;
+- `templates/plain/recipe.yaml` — a recipe whose values are the
+  template's own, describing what the shipped `plain` already does.
+
+The repo contains **no** change to any shipped template's colours, and
+**no** change to shipped renderer behaviour. Both shipped templates and
+the renderer are byte-for-byte identical to `main`:
+
+```
+git diff --quiet main -- evergreen/dialects.py templates/*/cv.tex
+```
+
+The workspace contains:
+
+- `templates.local/evergreen/cv.tex` — the accent-colour fix, with the
+  class's three derived colours re-derived after the template's
+  `\definecolor`, so the hex the template declares is the hex that
+  renders. **Verified**: the workspace PDF now carries `#8F0D0D`; the
+  backup of the same file still carries the class's `#b30000`.
+- any future knob whose fix would require touching the renderer.
+
+**Why this is the right boundary.** A recipe is *the user's* statement
+of which knobs they want. The defaults in it are the template's own
+values, so shipping one is not contamination — but the moment a value
+becomes *this user's* choice, it belongs in the workspace. And a change
+to a shipped template or to the renderer is a change to the plugin's
+behaviour for everybody, which is a release decision, not a feature
+commit.
+
+The consequence for M2: **the three remaining recipes are authored in
+the workspace, not in the repo.** The repo's role is to make them
+possible and to prove the seam works. `plain`'s recipe stays in the repo
+because it is a worked example that the CI gates exercise — but a
+recipe carrying a *chosen* colour would not.
+
+One more consequence, measured: the `plain` template's "bullet spacing"
+knob was dead, because the `plain` dialect writes an inline `\itemsep`
+that overrides the template's `\setlist`. Making it live needs the
+dialect changed — shipped renderer behaviour — so it does not ship. The
+knob was replaced with "bullet indent" (`leftmargin`), which the
+dialect does *not* override, so it is live. The lesson generalises: **a
+knob that is dead because the renderer overrides the template's own
+value is a knob the repo cannot offer.**
+
+**The per-knob liveness check is what makes any of this trustworthy.**
+A candidate is not a setting until a render proves that changing it
+changes the page. The generator proposes; the liveness check disposes.
+That is the division of labour, and it is why the generator can be
+allowed to guess.
+
+**The liveness check must not judge from one profile.** A setting can
+be dead for the sample and live for real content — `emergencystretch`
+is the example: it only matters when a line would otherwise overflow,
+and the sample has no such line. The check therefore runs each knob
+against **two** profiles (the sample, plus a stress profile with an
+unbreakable long word) and requires the knob to change the page for
+*some* profile, not for every one.
 
 **Where it fits.** As a helper in the authoring path, not a runtime
 component:
@@ -333,6 +436,38 @@ strictly better than writing them by hand and then automating the
 process. It also earns its keep on third-party templates in
 `templates.local/`, which is the case the plan's "the template author owns
 the recipe" decision was made for.
+
+### 3.2c The audit: what each base actually has
+
+A detector was run over all four shipped templates and every candidate
+was liveness-tested (one knob at a time, against a real render). This is
+the input M2's recipes are written from, and it is the generator's
+prototype. Compiles are deterministic — the same template compiled twice
+produces a byte-identical fingerprint — so these results are stable.
+
+| template | LIVE candidates | DEAD (and why) |
+|---|---|---|
+| `plain` | `\parindent`, `\parskip`, documentclass size, `leftmargin` | `itemsep` — the `plain` dialect writes an inline `\itemsep` that overrides the template's `\setlist` |
+| `yaac` | `\leftcolumn`, `\rightcolumnlength` | `basecolor` — the class freezes `linkcolor` at load time (§3.2b trap 5; **fixed in the workspace**, §3.2d) |
+| `altacv` | all 5 base colours, `\columnratio` | — (the 8 `\colorlet`s are derived, not settable) |
+| `minimal` | `\parindent`, `\bandH`, `\washW`, `\secspace`, `\rulegap`, `\headgap`, `\jobspace`, `\titlegap`, `\bulletspace`, `\itemspace`, `\columnratio`, `Ink`, `InkSoft`, `RuleGold` | `Band`, `ColDark`, `ColWash` — the pixels are a PNG; `IcoCol` — `\faIco` is redefined later to use `RuleGold`; `\leftcolW` — defined, never used |
+
+Two results deserve a note:
+
+- **`Paper`, `Mist` and `GoldenEarth` in `minimal` are LIVE but appear
+  nowhere in `cv.tex`.** They are referenced by the *dialect*
+  (`dialects.py` emits `\color{Paper}`, `\color{Mist}`,
+  `\color{GoldenEarth}`), not by the template. A generator that only
+  reads `cv.tex` would wrongly discard three live settings. It must
+  read the dialect too.
+- **`\emergencystretch` in `minimal` reads DEAD** and is arguably not
+  dead: it only matters when a line would overflow. Hence the
+  two-profile liveness rule above.
+
+The generator's input is therefore **three** sources, not one: the
+template's `cv.tex`, the vendored class file, and the dialect the
+template selects. A candidate is only a candidate once all three have
+been consulted.
 
 ### 3.3 The payload
 
@@ -455,6 +590,21 @@ edited templates is now unnecessary, since no template is edited. M2's
 per-base recipes must still map each knob to a pattern that matches exactly
 once, which is the same rule `plain` now demonstrates.
 
+*What M1 changed about the plan, second:* the plan said the renderer would
+not be touched. One dialect line *had* to change, to make the `plain`
+template's own bullet spacing adjustable — and then it did not ship,
+because a change to the renderer is a change to the plugin's behaviour
+for everybody (§3.2d). The knob it would have enabled was replaced with
+one that is live without any renderer change. The lesson is recorded in
+M2's risks: a dialect that hardcodes a value can make a template's own
+setting dead, and only the per-knob liveness check finds it.
+
+*What M1 changed about the plan, third:* the plan said the three
+remaining recipes would be written in the repo. They will not be. A
+recipe carrying a *chosen* value is a choice, and a choice belongs in
+the workspace (§3.2d). The repo ships the mechanism and proves the
+seam; the workspace holds the taste.
+
 ### M2 — All four bases, the CLI, and the CI gates
 
 *Goal: every shipped template is generatable, and the repo can prove it.*
@@ -462,14 +612,16 @@ once, which is the same rule `plain` now demonstrates.
 - Recipes for `yaac`, `altacv`, `minimal` — each knob mapped to the exact
   line it replaces, including the `\colorlet` cascade in `altacv` and the
   eso-pic sidebar geometry in `minimal`. No `cv.tex` edit is needed for any
-  of them, which was the point of the §3.1 revision.
+  of them, which was the point of the §3.1 revision. **These are authored
+  in the workspace, not in the repo** (§3.2d): a recipe that carries a
+  chosen value is a choice. The repo's job is to make them possible and
+  to prove the seam works.
 - `hermes career recipe <template>` — the **recipe generator** (§3.2b): read
   a template, propose a `recipe.yaml` skeleton with the mechanical
   candidates filled in, and flag the ones that need a human decision — a
   colour that is declared but never referenced, a derived colour, a class
   option, a non-literal value, an ambiguous line. It proposes; it does not
-  write. This is the tool that *authors* the three recipes above, so it
-  comes first in this milestone.
+  write, and it writes where the recipe belongs: the workspace.
 - `hermes career generate --base <id> --id <new-id> [--set k=v …]` — the
   headless, scriptable entry point. It is also the agent-facing surface; a
   `career_configure` tool is added in the same pass, which means
@@ -480,13 +632,24 @@ once, which is the same rule `plain` now demonstrates.
   render-parity check. The job must have **teeth** — a planted broken recipe
   is asserted to be rejected — in the same spirit as the existing negative
   tests.
+- **Every knob must be proven live, one at a time.** A setting that is
+  accepted and then changes nothing is the worst outcome for a form, because
+  the user cannot tell it from a setting that worked. This is checked
+  **per knob**, not on the settings as a whole: changing every setting at
+  once lets a dead knob hide behind a live one. The check compares a
+  *pixel fingerprint* of the rendered page, not the text geometry — a text
+  probe cannot see a change that only affects an image overlay, and would
+  report a false "no change" for a knob that plainly moved something.
+  Shipped in M1 (`evergreen/test_recipe.py`, `test_every_knob_is_live`); M2
+  extends it to the three new recipes as they land.
 - A self-contained desktop-surface lint in `scripts/`, mirroring the subset of
   `plugin_validate_desktop.py` that CI can run without a new Hermes. Without
   it, `desktop/plugin.js` lands with no CI coverage at all, since
   `hermes plugins validate` cannot run in CI.
 
 *Done when:* all four bases generate, compile, pass parity, and the CLI
-produces a template the existing `career_build` renders.
+produces a template the existing `career_build` renders. Every knob of every
+recipe is proven live by the per-knob check.
 
 *Risks:* `minimal`'s sidebar geometry is coupled to its text measure — the
 evergreen-resume skill records that a panel column's text measure and its rule
@@ -494,7 +657,11 @@ measure must agree, and the rule is inset 20pt. A recipe that changes the
 column split must move both, or the text runs off the panel. `altacv`'s
 `\colorlet` chain means changing `PastelRed` moves `tagline`, `heading`,
 `subheading`, and `accent` with it — the recipe must reflect that in the
-form's labelling.
+form's labelling. And a dialect that hardcodes a value inline can make a
+template's own setting dead — the `plain` dialect's `\itemsep2pt` did
+exactly that, and was found by the per-knob liveness check rather than by
+reading the LaTeX. When a recipe knob names a value the *dialect* also
+sets, the dialect's copy wins and the knob is a no-op.
 
 ### M3 — The backend door
 
