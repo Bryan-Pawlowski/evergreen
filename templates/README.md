@@ -105,6 +105,29 @@ Three rules, all enforced:
 A template without a recipe is still a complete template — it just has no
 adjustable settings, and the Configurator offers nothing to adjust.
 
+### A generated template carries its recipe
+
+`hermes career generate --base <id> --id <new-id>` writes a new template out of
+a base that has a recipe. The base's recipe is written into the new directory,
+with its `id` rewritten to the new template and each knob's `default` rewritten
+to the value that was applied — because a default is the text `cv.tex` already
+has, and the generated `cv.tex` now has the chosen value there. So
+
+- **a generated template is itself configurable.** Re-open it and it offers the
+  same knobs, starting from the values it was built with. It is not a dead end
+  with a `settings.yaml` recording what happened.
+- **generation composes.** Generating from a generated template reaches exactly
+  the same LaTeX as applying both sets of settings to the original base at once,
+  which the test suite asserts byte-for-byte.
+
+The rewrite is verified before the directory is created: every knob in the
+carried recipe must still match the generated `cv.tex` **exactly once**. That
+check has teeth, because `apply_settings` substitutes each pattern in turn — so
+if two knobs point at the same line, the first rewrite can swallow the second
+knob's pattern and the second would silently apply nothing. That is now an
+error that writes nothing, rather than a template carrying a control that does
+nothing.
+
 ### A setting is only real once a render proves it
 
 A setting that is accepted and then changes nothing is a control that
