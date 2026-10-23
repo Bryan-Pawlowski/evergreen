@@ -4,6 +4,7 @@ Mounted at ``/api/plugins/evergreen/`` by Hermes' dashboard router, this file
 makes the whole feature reachable over HTTP with no UI at all:
 
     GET  /templates    every template, its recipe, and its knobs
+    GET  /preview      one template's section titles and opening wording
     GET  /workspaces   the career workspaces this machine can name
     POST /generate     settings -> a new directory in ``templates.local/``
     POST /build        a template -> a real tectonic build -> PDF, page count
@@ -44,6 +45,7 @@ one and it is used.
 from __future__ import annotations
 
 import json
+import re
 import sys
 from pathlib import Path
 from typing import Any
@@ -61,6 +63,7 @@ from evergreen import (  # noqa: E402
     SHIPPED_TEMPLATES,
     career_build,
     discover_templates,
+    slot_columns,
     slots_in,
 )
 from evergreen.build import (  # noqa: E402
@@ -285,6 +288,7 @@ def _template_rows(workspace: Workspace | None) -> list[dict[str, Any]]:
             "engine": template.engine,
             "columns": template.columns,
             "slots": slots_in(template),
+            "slot_columns": slot_columns(template),
             "source": source,
             "path": str(template.dir),
             "has_recipe": has_recipe(template.dir),
@@ -344,6 +348,133 @@ def _check_settings(recipe, settings: dict[str, Any]) -> None:
 
 
 # --------------------------------------------------------------------------
+# The preview's wording
+# --------------------------------------------------------------------------
+
+# The titles the built-in dialects give the standard slots. A preview draws one
+# section per slot, and a section needs a heading: these are the words the
+# shipped templates actually print. A template that prints its own word still
+# gets this sketch, and the sketch says it is a sketch.
+PREVIEW_TITLES = {
+    "summary": "Summary",
+    "skills": "Skills",
+    "experience": "Experience",
+    "projects": "Projects",
+    "education": "Education",
+    "milestones": "Milestones",
+    "links": "Contact",
+    "languages": "Languages",
+}
+
+# Enough of each entry to fill a page-sized sketch without shipping the whole
+# profile across the wire; the pane clips what does not fit.
+PREVIEW_MAX_ENTRIES = 4
+PREVIEW_MAX_CHARS = 180
+
+_PREVIEW_MARKUP = re.compile(r"[*_`]+")
+_PREVIEW_HEADLINE_KEYS = ("role", "title", "degree", "label", "name")
+
+
+def _plain(value: Any) -> str:
+    """Profile prose as one plain line: emphasis stripped, whitespace folded."""
+    text = _PREVIEW_MARKUP.sub("", str(value if value is not None else ""))
+    text = " ".join(text.split())
+    if len(text) > PREVIEW_MAX_CHARS:
+        text = text[: PREVIEW_MAX_CHARS - 3].rstrip() + "..."
+    return text
+
+
+def _preview_headline(entry: dict[str, Any]) -> str:
+    for key in _PREVIEW_HEADLINE_KEYS:
+        value = entry.get(key)
+        if isinstance(value, str) and value.strip():
+            return _plain(value)
+    return ""
+
+
+def _preview_meta(entry: dict[str, Any]) -> str:
+    """The line under a headline: where, and when."""
+    start = str(entry.get("start") or "").strip()
+    end = str(entry.get("end") or "").strip()
+    if start or end:
+        span = f"{start} - {end or 'Present'}".strip(" -")
+    else:
+        span = str(entry.get("date") or "").strip()
+    parts = [_plain(entry.get("org") or ""), _plain(entry.get("location") or ""), _plain(span)]
+    return " | ".join(part for part in parts if part)
+
+
+def _preview_detail(entry: dict[str, Any]) -> str:
+    """The first thing said about an entry: a bullet, a detail, a level."""
+    bullets = entry.get("bullets") or []
+    for bullet in bullets[:1]:
+        text = bullet.get("text") if isinstance(bullet, dict) else bullet
+        if isinstance(text, str) and text.strip():
+            return _plain(text)
+    for key in ("detail", "summary", "subtitle"):
+        value = entry.get(key)
+        if isinstance(value, str) and value.strip():
+            return _plain(value)
+    items = entry.get("items") or []
+    for item in items[:1]:
+        text = item.get("text") if isinstance(item, dict) else item
+        if isinstance(text, str) and text.strip():
+            return _plain(text)
+    level = entry.get("level")
+    if isinstance(level, str) and level.strip():
+        return _plain(level)
+    return ""
+
+
+def _preview_section(profile, slot: str, column: str) -> dict[str, Any]:
+    """One section of the sketch: a heading, and the start of each entry."""
+    title = PREVIEW_TITLES.get(slot)
+    if title is None and slot.startswith("section:"):
+        wanted = slot.split(":", 1)[1]
+        title = wanted
+        for section in profile.data.get("sections") or []:
+            if section.get("id") == wanted:
+                title = section.get("title") or wanted
+                break
+    entries: list[dict[str, Any]] = []
+    for entry in profile.visible(slot)[:PREVIEW_MAX_ENTRIES]:
+        if not isinstance(entry, dict):
+            continue
+        bullets = entry.get("bullets") or []
+        entries.append({
+            "headline": _preview_headline(entry),
+            "meta": _preview_meta(entry),
+            "detail": _preview_detail(entry),
+            # How many lines follow the quoted one. The sketch draws them as
+            # bars rather than inventing text: an entry that carries four
+            # bullets fills four times the height, and that is the fact the
+            # drawing has to carry for the page to look like the page.
+            "more": max(0, min(len(bullets) - 1, 2)),
+        })
+    return {"slot": slot, "title": title or slot, "column": column, "entries": entries}
+
+
+def _preview_header(profile) -> dict[str, Any]:
+    person = profile.person
+    name = person.get("name") or {}
+    full = " ".join(
+        str(name.get(key) or "").strip() for key in ("first", "last")
+    ).strip()
+    if not full:
+        full = str(profile.workspace_name or "").strip()
+    contact = [
+        _plain(value)
+        for value in (person.get("email"), person.get("phone"), person.get("location"))
+        if isinstance(value, str) and value.strip()
+    ]
+    return {
+        "name": full,
+        "tagline": _plain(person.get("tagline") or ""),
+        "contact": contact,
+    }
+
+
+# --------------------------------------------------------------------------
 # Routes
 # --------------------------------------------------------------------------
 
@@ -371,6 +502,78 @@ def get_templates(workspace: str | None = None) -> dict[str, Any]:
         "bases": [row["id"] for row in rows if row["generate_from"]],
         "tectonic": find_tectonic(),
     }
+
+
+@router.get("/preview")
+def get_preview(template: str, workspace: str | None = None) -> dict[str, Any]:
+    """What the sketch needs to stop being generic: real headings and wording.
+
+    Three facts come from three places, and none of them can be invented here:
+    the section titles and the first line of each entry come from the
+    workspace's own profile, and which column a section lands in comes from the
+    template's own source (its ``\\switchcolumn``), not from a guess about the
+    dialect. Colours are the caller's business: they live in the knobs it
+    already holds.
+
+    A template with no profile to draw from is not an error — the sketch falls
+    back to placeholder lines — so a missing profile is reported in
+    ``wording_error`` rather than raised.
+    """
+    ws = _workspace(workspace)
+    templates = {t.id: t for t in discover_templates(*_roots(ws))}
+    chosen = templates.get(template)
+    if chosen is None:
+        known = ", ".join(sorted(templates)) or "(none)"
+        raise HTTPException(
+            status_code=404,
+            detail=f"No template {template!r}. Available: {known}.",
+        )
+
+    columns = slot_columns(chosen)
+    ordered = [(slot, "left") for slot in columns["left"]]
+    ordered += [(slot, "right") for slot in columns["right"]]
+
+    payload: dict[str, Any] = {
+        "ok": True,
+        "workspace": _describe(ws),
+        "template": chosen.id,
+        "columns": chosen.columns,
+        "slot_columns": columns,
+        # A sketch of a page needs the page's own colours, and they are not the
+        # app's: a LaTeX document that declares no page or body colour renders
+        # black on white. Sent as data rather than written into the pane, so the
+        # pane keeps its rule against hardcoded colours — and so a template that
+        # does declare them is reported by the knob it declares them in.
+        "defaults": {
+            "paper": "FFFFFF",
+            "ink": "000000",
+            "note": ("LaTeX's defaults, used only where the template declares no "
+                     "page or body colour."),
+        },
+        "header": None,
+        "sections": [],
+        "wording_error": None,
+    }
+
+    try:
+        profile = ws.load()
+    except CareerProfileError as exc:
+        # The sketch still has a shape to draw — the slots know their columns.
+        payload["wording_error"] = str(exc)
+        payload["sections"] = [
+            {"slot": slot, "title": PREVIEW_TITLES.get(slot, slot), "column": column, "entries": []}
+            for slot, column in ordered
+            if slot != "identity"
+        ]
+        return payload
+
+    payload["header"] = _preview_header(profile)
+    payload["sections"] = [
+        _preview_section(profile, slot, column)
+        for slot, column in ordered
+        if slot != "identity"
+    ]
+    return payload
 
 
 @router.get("/workspaces")
