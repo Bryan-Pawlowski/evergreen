@@ -92,9 +92,18 @@ function describeError(error) {
   if (typeof error === 'string') {
     return error
   }
+  // A FastAPI refusal carries its reason in `detail`, and the door's messages
+  // are written to be read ("no route", "unknown setting, this template
+  // offers…"). The bridge may hand it back on the error, on the parsed body, or
+  // on a response wrapper, so all three are tried before the bare message.
+  const detail = [error.detail, error.body && error.body.detail, error.response && error.response.detail]
+    .find(value => typeof value === 'string' && value.trim())
+  if (detail) {
+    return detail
+  }
   const message = error.message || String(error)
-  // A FastAPI refusal carries its `detail`; surfacing it beats "400 Bad Request".
-  return message
+  const status = error.status || error.statusCode
+  return status && !message.includes(String(status)) ? message + ' (HTTP ' + status + ')' : message
 }
 
 function query(workspace) {
