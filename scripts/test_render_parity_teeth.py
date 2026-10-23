@@ -31,9 +31,11 @@ sys.path.insert(0, str(REPO_ROOT))
 sys.path.insert(0, str(REPO_ROOT / "scripts"))
 
 from check_render_parity import (  # noqa: E402
+    NoTextExtractor,
     _check_template,
     _claims,
     _declared_slots,
+    _extractor_name,
 )
 from evergreen.render import discover_templates  # noqa: E402
 from evergreen.selftest import SAMPLE  # noqa: E402
@@ -45,6 +47,15 @@ def main() -> int:
         print("FAIL: no shipped templates discovered")
         return 1
 
+    # Without an extractor the check cannot read a text layer at all, so
+    # there is no behaviour to prove. Say that plainly instead of
+    # reporting a false negative.
+    if _extractor_name() is None:
+        print("SKIP: no PDF text extractor is installed; the render-parity "
+              "check cannot run here.")
+        print("      Install one:  pip install pymupdf")
+        return 2
+
     claims = _claims(SAMPLE)
     ok = True
 
@@ -52,7 +63,11 @@ def main() -> int:
     with tempfile.TemporaryDirectory() as tmpdir:
         tmp = Path(tmpdir)
         for template in templates:
-            findings = _check_template(template, claims, tmp)
+            try:
+                findings = _check_template(template, claims, tmp)
+            except NoTextExtractor:
+                print("SKIP: the PDF text extractor became unavailable.")
+                return 2
             status = "OK" if not findings else "FAIL"
             if findings:
                 ok = False
@@ -79,7 +94,11 @@ def main() -> int:
     with tempfile.TemporaryDirectory() as tmpdir:
         tmp = Path(tmpdir)
         for template in summarised:
-            findings = _check_template(template, claims, tmp, data=broken)
+            try:
+                findings = _check_template(template, claims, tmp, data=broken)
+            except NoTextExtractor:
+                print("SKIP: the PDF text extractor became unavailable.")
+                return 2
             if any("summary" in f for f in findings):
                 print(f"  negative [{template.id}/empty summary] OK: "
                       f"{findings}")
