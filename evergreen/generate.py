@@ -9,6 +9,7 @@ LaTeX came from.
     templates.local/<id>/
     ├── template.yaml      the base's manifest, with a new id and name
     ├── cv.tex             the base's LaTeX, with the settings applied
+    ├── recipe.yaml        the base's recipe, re-pointed at the new cv.tex
     ├── settings.yaml      what was chosen, and from which base
     ├── <base>.cls         copied from the base template
     ├── fonts/  fonts.conf copied from the base template
@@ -17,6 +18,24 @@ LaTeX came from.
 The class, fonts, and assets are **copied, not referenced**: the template
 contract has no notion of inheritance, and a template directory has to be
 self-contained to be portable to another machine.
+
+**The recipe travels with the template.** A generated template's lines are
+its own ``cv.tex``, so the recipe that names them belongs to it too: the
+base's recipe is written alongside, with its ``id`` rewritten to the new
+template and each knob's ``default`` rewritten to the value that was applied.
+That makes a generated template configurable again -- re-open it in the
+Configurator and it offers the same knobs, starting from the values it was
+built with -- and it makes generation compose: generating from a generated
+template reaches the same LaTeX as applying both sets of settings to the
+base at once.
+
+The rewrite is checked, not assumed. Rewriting one knob can swallow another
+knob's pattern (two knobs pointing at the same line is the ordinary way to
+get there), and ``apply_settings`` substitutes each pattern in turn, so the
+second one would silently match nothing. So the carried recipe is verified
+against the generated source before anything is written: every knob must
+still match exactly once, or generation fails and leaves no directory
+behind.
 """
 
 from __future__ import annotations
@@ -26,8 +45,10 @@ import shutil
 from pathlib import Path
 from typing import Any
 
-from .career import dump_structured
-from .recipe import RecipeError, apply_settings, load_recipe
+from .career import CareerProfileError, dump_structured, load_structured
+from .recipe import (RECIPE_FILENAME, Recipe, RecipeError, apply_settings,
+                     check_recipe_against_source, load_recipe, validate_recipe,
+                     write_recipe)
 from .render import Template, TemplateError, load_template
 
 SETTINGS_FILENAME = "settings.yaml"
@@ -125,6 +146,26 @@ def generate_template(
     if dest_dir.exists() and any(dest_dir.iterdir()):
         raise GenerateError(f"{dest_dir} already exists and is not empty.")
 
+    display_name = name or template_id
+    carried = _carried_recipe(
+        base_dir, recipe, settings, template_id=template_id, name=display_name
+    )
+
+    # The carried recipe must still point at real lines in the generated
+    # source, or it is a recipe for a template that no longer exists. This is
+    # not a formality: rewriting one knob can swallow another knob's pattern,
+    # and that would leave a control that silently does nothing. Checked
+    # before the directory is created, so a failure writes nothing.
+    try:
+        errors = validate_recipe(carried)
+        if errors:
+            raise RecipeError("; ".join(errors[:5]))
+        check_recipe_against_source(Recipe(carried), source)
+    except RecipeError as exc:
+        raise GenerateError(
+            f"The settings cannot be carried into {template_id!r}: {exc}"
+        ) from exc
+
     dest_dir.mkdir(parents=True, exist_ok=True)
 
     main_name = base.main
@@ -133,11 +174,18 @@ def generate_template(
     manifest = {field: base.manifest[field] for field in _INHERITED_FIELDS
                 if field in base.manifest}
     manifest["id"] = template_id
-    manifest["name"] = name or template_id
+    manifest["name"] = display_name
     manifest["description"] = description or (
         f"Generated from the {base.name} template."
     )
     dump_structured(manifest, dest_dir / "template.yaml")
+
+    # The recipe the new template's own lines now answer to, so the configurator
+    # can re-open a generated template instead of treating it as a dead end.
+    try:
+        write_recipe(dest_dir, carried, overwrite=True)
+    except RecipeError as exc:
+        raise GenerateError(str(exc)) from exc
 
     # The settings the template was built from, so a generated template
     # records its own provenance and can be regenerated.
@@ -153,6 +201,59 @@ def generate_template(
     _copy_build_inputs(base, dest_dir)
 
     return dest_dir
+
+
+def _carried_recipe(
+    base_dir: Path,
+    recipe: Recipe,
+    settings: dict[str, Any],
+    *,
+    template_id: str,
+    name: str,
+) -> dict[str, Any]:
+    """The base's recipe, re-pointed at the template being generated.
+
+    The base's ``recipe.yaml`` is read back as data rather than rebuilt from
+    the ``Recipe`` object, so anything the author wrote -- a description, a
+    knob's ``min``/``max``/``options``, an extra field a later format adds --
+    survives untouched. Three things change:
+
+    * ``id`` becomes the new template's id, because a recipe describes the
+      template it sits in and the generator refuses a mismatch;
+    * ``name`` becomes the generated template's display name;
+    * every knob that was given a value gets that value as its ``default``,
+      in the form it was written into ``cv.tex`` -- a default is the text
+      the template already has, and the generated template now has the
+      chosen value there.
+
+    A knob nobody touched keeps its own default, which is still exactly what
+    its line says.
+    """
+    path = base_dir / RECIPE_FILENAME
+    if not path.exists():
+        path = base_dir / "recipe.yml"
+    try:
+        data = load_structured(path)
+    except CareerProfileError as exc:
+        raise GenerateError(f"{path.name} could not be read: {exc}") from exc
+    if not isinstance(data, dict):
+        raise GenerateError(f"{path.name} must contain a mapping.")
+
+    carried: dict[str, Any] = {
+        key: value for key, value in data.items() if key != "knobs"
+    }
+    carried["id"] = template_id
+    carried["name"] = name
+
+    knobs: list[dict[str, Any]] = []
+    for spec in data.get("knobs") or []:
+        knob = dict(spec)
+        knob_id = knob.get("id")
+        if knob_id in settings:
+            knob["default"] = recipe.knob(knob_id).normalize(settings[knob_id])
+        knobs.append(knob)
+    carried["knobs"] = knobs
+    return carried
 
 
 def _copy_build_inputs(base: Template, dest_dir: Path) -> None:
