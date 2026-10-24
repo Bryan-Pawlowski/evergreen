@@ -1,5 +1,5 @@
 name: evergreen
-version: "0.3.0"
+version: "0.3.1"
 description: "A career workspace and LaTeX CV builder: intake your career history, keep it as structured data, and render a tailored CV to PDF."
 author: "Bryan-Pawlowski"
 license: MIT
