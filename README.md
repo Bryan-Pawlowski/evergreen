@@ -1,5 +1,6 @@
 # Evergreen
 
+[![version](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fraw.githubusercontent.com%2FBryan-Pawlowski%2Fevergreen%2Fstable%2Fdashboard%2Fmanifest.json&label=version&query=version&color=6d4aff)](https://github.com/Bryan-Pawlowski/evergreen/releases)
 [![CI](https://github.com/Bryan-Pawlowski/evergreen/actions/workflows/ci.yml/badge.svg?branch=stable)](https://github.com/Bryan-Pawlowski/evergreen/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Hermes](https://img.shields.io/badge/hermes-%3E%3D0.22.0-6d4aff.svg)](https://github.com/NousResearch/hermes-agent)
