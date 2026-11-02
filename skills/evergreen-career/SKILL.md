@@ -128,6 +128,20 @@ whether this is the wrong job.
    emphasis at the job's language. Never add a claim, never add a number
    that was not in the source, never add a technology the user did not use.
 
+**What a target actually tailors: the optional slots, not the history.** The
+ranking is relevance, and a CV is not a search result, so:
+
+- **Experience, education, and milestones render in full, in profile order.**
+  An entry the matcher scores zero is still an employer or a degree; dropping
+  it leaves a hole that reads as a gap in the career, and score order is not
+  chronological order.
+- **Projects are tailored.** The ranking sets their order and may leave one
+  out, which is the point of aiming a CV at a job.
+- **Skills keep every group**, ranked first and the rest after; a group the
+  job description never mentions is still a claim the CV makes.
+- **Report the gaps, don't delete them.** A requirement nothing covers belongs
+  in your findings to the user, which is what `unmatched_terms` is for.
+
 ### 4. Build
 
 `career_build` with an optional `template` and `target`. It renders the
