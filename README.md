@@ -106,6 +106,15 @@ hermes career status
 hermes career build --template yaac --target acme
 ```
 
+**What `--target` changes.** The match report ranks the profile's entries
+against the job, and a build with a target uses that ranking to tailor the
+**optional** slots: projects are ordered by relevance and an irrelevant one
+can be left out. It never thins the **history** — experience, education and
+milestones always render in full and in profile order, because a dropped
+entry reads as a gap in the career — and it never drops a **skills** group,
+the ranked ones simply come first. Without a target, every visible entry is
+included in profile order.
+
 ## The workspace
 
 A workspace is created **by name**, and the name becomes a directory
