@@ -142,6 +142,11 @@ ranking is relevance, and a CV is not a search result, so:
 - **Report the gaps, don't delete them.** A requirement nothing covers belongs
   in your findings to the user, which is what `unmatched_terms` is for.
 
+**The match report is a snapshot; the profile is the source of truth.** The
+build resolves every ranked entry back to its current profile form, so the
+normal order (match, then polish the wording, then build) works. An entry you
+hide or remove after matching does not come back.
+
 ### 4. Build
 
 `career_build` with an optional `template` and `target`. It renders the
