@@ -446,7 +446,11 @@ def _run_tool_checks(fake_home: Path) -> int:
             "bullets": [{"text": "Wrote GPU shaders in C++."}],
             "tags": ["C++", "GPU"],
         }],
-        "projects": [{"id": "tool", "title": "Toolkit", "date": "2023"}],
+        # Scores hits (CUDA, C++), so the report ranks it and a targeted build
+        # can leave it out. That is what makes the snapshot checks below test
+        # the PROJECTS path: history slots come from the profile regardless.
+        "projects": [{"id": "tool", "title": "Toolkit", "date": "2023",
+                      "bullets": [{"text": "A CUDA pipeline in C++."}]}],
         "education": [{"id": "state", "degree": "B.Sc. Computer Science",
                        "org": "State University"}],
         "skills": [{"label": "Languages", "items": ["C++", "Python"]}],
@@ -633,6 +637,30 @@ def _run_tool_checks(fake_home: Path) -> int:
     check("tools: a tailored build keeps history in profile order",
           -1 not in positions and positions == sorted(positions),
           f"positions={positions}")
+
+    # A match report is a SNAPSHOT, and editing the profile after matching is the
+    # normal order (match, then polish the wording). These two checks use the
+    # PROJECTS slot on purpose: history slots always render from the profile, so
+    # only the tailored slots can go stale.
+    _json.loads(career_profile({
+        "action": "update", "workspace": ws,
+        "patch": {"projects": [{"id": "tool", "title": "Pipeline Kit"}]}}))
+    out = _json.loads(career_build({
+        "target": "acme", "template": "yaac", "workspace": ws}))
+    tex = Path(out["tex"]).read_text(encoding="utf-8")
+    check("tools: a targeted build renders the current profile, not the report's copy",
+          "Pipeline Kit" in tex and "Toolkit" not in tex,
+          "the build rendered the stale entry captured by the match report")
+
+    _json.loads(career_profile({
+        "action": "update", "workspace": ws,
+        "patch": {"projects": [{"id": "tool", "visible": False}]}}))
+    out = _json.loads(career_build({
+        "target": "acme", "template": "yaac", "workspace": ws}))
+    tex = Path(out["tex"]).read_text(encoding="utf-8")
+    check("tools: a targeted build does not resurrect a hidden entry",
+          "Pipeline Kit" not in tex and "Toolkit" not in tex,
+          "the report's copy of a hidden entry was rendered")
 
     # The untargeted build must work too.
     out = _json.loads(career_build({
