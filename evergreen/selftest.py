@@ -430,6 +430,21 @@ def _run_tool_checks(fake_home: Path) -> int:
             "location": "Remote", "start": "Mar 2020", "end": "Present",
             "bullets": [{"text": "Built a **CUDA** rendering pipeline."}],
             "tags": ["CUDA", "C++"], "priority": 90,
+        }, {
+            # Scores ZERO against the JD below. A CV still has to show it:
+            # an employment entry is not a search hit, and dropping it leaves
+            # an unexplained gap between the two jobs around it.
+            "id": "middle", "role": "Office Systems Coordinator",
+            "org": "Middle Co", "location": "Portland, OR",
+            "start": "2016", "end": "2020",
+            "bullets": [{"text": "Maintained the internal wiki and ordered supplies."}],
+        }, {
+            # Scores SOME hits, and is the OLDEST entry. A score-ordered build
+            # would put it above `middle`, which is out of chronological order.
+            "id": "oldest", "role": "Graphics Programmer", "org": "Old Co",
+            "location": "Portland, OR", "start": "2012", "end": "2016",
+            "bullets": [{"text": "Wrote GPU shaders in C++."}],
+            "tags": ["C++", "GPU"],
         }],
         "projects": [{"id": "tool", "title": "Toolkit", "date": "2023"}],
         "education": [{"id": "state", "degree": "B.Sc. Computer Science",
@@ -488,9 +503,11 @@ def _run_tool_checks(fake_home: Path) -> int:
     entries = _json.loads(career_profile({
         "action": "read", "workspace": ws}))["career_profile"]["experience"]
     check("tools: merging an entry keeps the other fields",
-          len(entries) == 1
-          and entries[0]["role"] == "Staff Engineer"
-          and entries[0]["org"] == "Acme Corp",
+          len(entries) == 3
+          and next((e for e in entries if e.get("id") == "acme"), {}).get("role")
+          == "Staff Engineer"
+          and next((e for e in entries if e.get("id") == "acme"), {}).get("org")
+          == "Acme Corp",
           str(entries)[:300])
 
     out = _json.loads(career_profile({
@@ -501,6 +518,12 @@ def _run_tool_checks(fake_home: Path) -> int:
     check("tools: an id-less list is replaced, not appended",
           len(entries) == 1 and entries[0]["label"] == "Only",
           str(entries)[:200])
+
+    # Restore a skills group whose items are real terms: the replacement check
+    # above deliberately wiped it, and the match/build checks below need one.
+    _json.loads(career_profile({
+        "action": "update", "workspace": ws,
+        "patch": {"skills": [{"label": "Languages", "items": ["C++", "Python"]}]}}))
 
     # An unrelated file must not be mistaken for a career profile, and
     # must not be overwritten.
@@ -581,6 +604,13 @@ def _run_tool_checks(fake_home: Path) -> int:
     check("tools: match reports unmatched terms",
           "vulkan" in out["report"]["unmatched_terms"],
           str(out["report"]["unmatched_terms"]))
+    # A skills group is a label plus a list of items. If the matcher cannot
+    # read that shape, its terms are never "covered" - and, worse, the report
+    # carries no skills ranking, which used to make a tailored build drop the
+    # whole section.
+    check("tools: a skills group's items count as covered terms",
+          "python" not in out["report"]["unmatched_terms"],
+          str(out["report"]["unmatched_terms"][:400]))
 
     out = _json.loads(career_build({
         "target": "acme", "template": "yaac", "workspace": ws}))
@@ -590,6 +620,19 @@ def _run_tool_checks(fake_home: Path) -> int:
           str(out.get("pdf")))
     check("tools: targeted build has pages",
           (out.get("pages") or 0) >= 1, str(out.get("pages")))
+
+    # What the report ranks is *relevance*, and a CV is not a search result.
+    # The rendered source is the thing to assert on: the selection is only
+    # observable through what reached the page.
+    tex = Path(out["tex"]).read_text(encoding="utf-8")
+    check("tools: a tailored build keeps every skills group",
+          "Python" in tex, tex[:300])
+    check("tools: a tailored build keeps an entry the matcher scored zero",
+          "Middle Co" in tex, "the zero-score employment entry was dropped")
+    positions = [tex.find(needle) for needle in ("Acme Corp", "Middle Co", "Old Co")]
+    check("tools: a tailored build keeps history in profile order",
+          -1 not in positions and positions == sorted(positions),
+          f"positions={positions}")
 
     # The untargeted build must work too.
     out = _json.loads(career_build({
