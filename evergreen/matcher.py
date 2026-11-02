@@ -151,16 +151,30 @@ def jd_terms(jd_text: str) -> dict[str, float]:
 
 
 def _entry_terms(entry: dict) -> set[str]:
-    """Every term an entry covers."""
+    """Every term an entry covers.
+
+    ``items`` and ``label`` are read too: a skills group is a label plus a
+    list of items and nothing else, so without them **no skill group could
+    ever score**, the report carried no ``skills`` ranking, and a build that
+    renders only what the report covers dropped the section entirely.
+    """
     terms: set[str] = set()
 
-    for key in ("role", "title", "degree", "subtitle", "org", "detail", "summary"):
+    for key in ("role", "title", "degree", "subtitle", "org", "detail",
+                "summary", "label", "level"):
         value = entry.get(key)
         if isinstance(value, str):
             terms.update(_clean_token(w) for w in _normalise(value))
 
     for tag in entry.get("tags") or []:
         terms.update(_clean_token(w) for w in _normalise(tag))
+
+    # A skills group's items are plain strings; a user-defined section's are
+    # bullets. Both shapes occur in a real profile.
+    for item in entry.get("items") or []:
+        text = item.get("text") if isinstance(item, dict) else item
+        if isinstance(text, str):
+            terms.update(_clean_token(w) for w in _normalise(text))
 
     for bullet in entry.get("bullets") or []:
         text = bullet.get("text") if isinstance(bullet, dict) else bullet
@@ -226,6 +240,86 @@ def match(profile: CareerProfile, jd_text: str,
 
     report.unmatched_terms = [t for t in report.required_terms if t not in covered]
     return report
+
+
+# The slots a tailored CV must not thin out. An entry the matcher scored zero
+# is still an employer, a degree, or an award: dropping it leaves a hole that
+# reads as a gap in the person's career, and re-ranking these by score puts
+# the history out of chronological order.
+_HISTORY_SLOTS = ("experience", "education", "milestones")
+
+# Optional slots: their membership really is a tailoring decision, so the
+# report's ranking both orders them and may leave an entry out.
+_TAILORED_SLOTS = ("projects",)
+
+
+def _entry_key(entry: dict) -> str:
+    """The key a report entry and a profile entry agree on.
+
+    It mirrors ``Matched.entry_id``: an entry is identified by its ``id`` when
+    it has one, and by its title/degree/label when it does not (milestones and
+    skills groups carry no id).
+    """
+    for key in ("id", "title", "degree", "label"):
+        value = entry.get(key)
+        if value:
+            return str(value)
+    return ""
+
+
+def tailored_selection(profile: CareerProfile, by_slot: dict[str, list[dict]],
+                       used_slots: list[str]) -> dict[str, list[dict]]:
+    """Turn a match report's per-slot ranking into the renderer's selection.
+
+    A CV is not a search result, so the report does not get the last word on
+    every slot:
+
+    - **History slots** (experience, education, milestones) render *every*
+      visible entry, in profile order. Score order is not chronological order,
+      and a dropped employer shows up as an unexplained gap.
+    - **Optional slots** (projects) are tailored: the ranking sets the order
+      and its membership, so an irrelevant project can be left out of a CV
+      aimed at a job. When the report ranks nothing for the slot, the
+      profile's entries are used rather than an empty section.
+    - **Skills** keep every group, with the ranked ones first and the unranked
+      ones after them. A skill list has no chronology, and a group nothing in
+      the job description mentioned is still a claim the CV makes.
+
+    Every other slot the template uses falls back to the profile, because the
+    matcher ranks career entries and knows nothing about a header, a summary,
+    or a contact line.
+    """
+    ranked: dict[str, list[dict]] = {}
+    for slot, items in (by_slot or {}).items():
+        entries = [item["entry"] for item in items
+                   if isinstance(item, dict) and isinstance(item.get("entry"), dict)]
+        if entries:
+            ranked[slot] = entries
+
+    selection: dict[str, list[dict]] = {}
+    for slot in used_slots:
+        visible = profile.visible(slot)
+        if slot in _HISTORY_SLOTS:
+            if visible:
+                selection[slot] = visible
+            continue
+        if slot in _TAILORED_SLOTS:
+            chosen = ranked.get(slot) or visible
+            if chosen:
+                selection[slot] = chosen
+            continue
+        if slot == "skills":
+            ordered = list(ranked.get(slot, []))
+            seen = {_entry_key(entry) for entry in ordered}
+            ordered.extend(entry for entry in visible
+                           if _entry_key(entry) not in seen)
+            if ordered:
+                selection[slot] = ordered
+            continue
+        # identity, summary, links, languages, and user-defined sections.
+        if visible:
+            selection[slot] = visible
+    return selection
 
 
 def evidence_for(entry: dict, terms: list[str]) -> list[str]:

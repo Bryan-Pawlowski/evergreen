@@ -437,9 +437,13 @@ def career_match(params: dict, ctx=None, **kw) -> str:
         "target": safe or "untitled",
         "saved": str(out_path),
         "report": report.to_dict(),
-        "guidance": "Selection is deterministic. The next step rewrites the "
-                    "wording of the bullets that already speak to the job; it "
-                    "does not add new claims.",
+        "guidance": "Selection is deterministic. A build with this target "
+                    "tailors the optional slots (projects are ranked, an "
+                    "irrelevant one can be left out); experience, education "
+                    "and milestones always render in full and in profile "
+                    "order, and every skills group is kept. The next step "
+                    "rewrites the wording of the bullets that already speak "
+                    "to the job; it does not add new claims.",
     }, indent=2, ensure_ascii=False)
 
 
@@ -471,21 +475,11 @@ def career_build(params: dict, ctx=None, **kw) -> str:
             report = json.loads(report_path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError) as exc:
             return json.dumps({"error": f"Could not read the match report: {exc}"})
-        by_slot = report.get("by_slot") or {}
-        selection = {}
-        for slot, items in by_slot.items():
-            entries = []
-            for item in items:
-                entry = item.get("entry")
-                if isinstance(entry, dict):
-                    entries.append(entry)
-            if entries:
-                selection[slot] = entries
-        # A tailored CV still needs the header, the summary, and the links —
-        # the matcher only ranks the career entries. Slots the report does
-        # not cover fall back to the profile's visible entries.
-        for slot in ("identity", "summary", "links", "languages"):
-            selection.setdefault(slot, profile.visible(slot))
+        # The report ranks career entries; `tailored_selection` decides what
+        # that means for a CV (history is never thinned, skills are never
+        # dropped, the optional slots are what the ranking actually tailors).
+        selection = matcher_mod.tailored_selection(
+            profile, report.get("by_slot") or {}, slots_in(template))
 
     try:
         tex = render_tex(template, profile, selection)
@@ -970,8 +964,12 @@ TOOLS = [
         "description": (
             "Render the profile into a LaTeX CV and compile it to a PDF with "
             "tectonic. With `target`, the CV is tailored using a saved match "
-            "report; without it, every visible entry is included. Returns the "
-            "PDF path, the page count, and the overfull-box count."
+            "report: projects are ranked by relevance and an irrelevant one "
+            "can be left out, while experience, education and milestones "
+            "always render in full and in profile order, and every skills "
+            "group is kept. Without a target, every visible entry is "
+            "included. Returns the PDF path, the page count, and the "
+            "overfull-box count."
         ),
         "parameters": {
             "type": "object",
