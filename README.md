@@ -115,6 +115,11 @@ entry reads as a gap in the career — and it never drops a **skills** group,
 the ranked ones simply come first. Without a target, every visible entry is
 included in profile order.
 
+The report is a **snapshot** of the entries as they were when the match ran,
+so the build resolves each ranked entry back to the profile before rendering:
+wording you polish after matching still reaches the page, and an entry you
+hide afterwards does not come back.
+
 ## The workspace
 
 A workspace is created **by name**, and the name becomes a directory
