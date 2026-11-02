@@ -291,8 +291,20 @@ def tailored_selection(profile: CareerProfile, by_slot: dict[str, list[dict]],
     """
     ranked: dict[str, list[dict]] = {}
     for slot, items in (by_slot or {}).items():
-        entries = [item["entry"] for item in items
-                   if isinstance(item, dict) and isinstance(item.get("entry"), dict)]
+        # The report is a SNAPSHOT taken when the match ran, so its `entry`
+        # copies go stale the moment the profile is edited — and wording
+        # normally IS edited between matching and building. The profile is the
+        # source of truth, so each ranked entry is resolved back to its current
+        # form, and an entry the profile no longer has is dropped instead of
+        # being resurrected from the report.
+        current = {_entry_key(entry): entry for entry in profile.visible(slot)}
+        entries = []
+        for item in items:
+            if not (isinstance(item, dict) and isinstance(item.get("entry"), dict)):
+                continue
+            entry = current.get(_entry_key(item["entry"]))
+            if entry is not None:
+                entries.append(entry)
         if entries:
             ranked[slot] = entries
 
