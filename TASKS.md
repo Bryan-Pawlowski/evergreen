@@ -1,13 +1,15 @@
 # Evergreen — remaining work
 
-Status as of 2026-10-23. The plugin is built, installed, and green; this is
+Status as of 2026-11-11 (re-measured against the tree and GitHub, not copied
+from the last pass). The plugin is built, installed, and green; this is
 what is left before it is genuinely shippable.
 
 The **Template Configurator** (the recipe seam, the generator, the HTTP door, the
 desktop pane, and the distribution) is tracked in
-[`CONFIGURATOR-PLAN.md`](CONFIGURATOR-PLAN.md) — M1–M5, done, merged to `main`
-and releasing on `stable`. This file does not repeat it. Distribution is the git
-URL; there is no catalog PR (see the settled-decisions row below).
+[`CONFIGURATOR-PLAN.md`](CONFIGURATOR-PLAN.md) — M1–M5, done, merged to `main`,
+and **released on `stable` as 0.3.1**. This file does not repeat it.
+Distribution is the git URL; there is no catalog PR (see the settled-decisions
+row below).
 
 Legend: ☐ not started · ◐ in progress · ☑ done & verified
 
@@ -159,10 +161,12 @@ These forks were decided and are no longer open:
      would add a model, a provider, a privacy question (a CV is
      sensitive), and it would make "deterministic selection" a claim
      rather than a fact.
-- ☐ **The `unmatched_terms` report is not surfaced anywhere useful.** It
-  is the most valuable output of the matcher and it currently only lands
-  in a JSON file. It should be prominent in the build output and in the
-  skill's guidance.
+- ◐ **The `unmatched_terms` report is surfaced to the agent, not to the build.**
+  `skills/evergreen-career/SKILL.md` now names it the matcher's most important
+  output and tells the agent to report it, so the guidance half is done. It
+  still appears nowhere in `evergreen/__init__.py`, so neither `career_build`
+  nor `/career status` prints it: the only place it lands is the JSON under
+  `targets/`. Surface it in the build output next.
 
 ## 5. Verification and distribution
 
@@ -170,6 +174,23 @@ These forks were decided and are no longer open:
   manifest check + leak check) and the `negative-tests` job (plant a
   leak, plant a broken manifest, assert both are rejected).
 - ☑ **The git-URL install path works** from a clean state.
+- ☐ **Tag the release.** The repo has **zero tags and zero GitHub releases**
+  (`git ls-remote --tags` and the releases API both answer empty), while the
+  README's version badge links to `/releases`. A tag selects nothing for an
+  installer — `--ref` takes a 40-character SHA and nothing else — so this is
+  bookkeeping, not a channel; but a badge pointing at an empty page is a claim
+  the repo does not honour. `gh release create v<version> --target <stable-sha>`
+  after each promotion merge, never on `main`.
+- ☐ **Move this machine's install, then restart the backend.** The copy in the
+  active profile is a git checkout that has been **hand-patched and left
+  dirty**: several of its files already match `main` (the pane, the door, the
+  renderer) and `evergreen/__init__.py` carries one uncommitted re-export, while
+  its HEAD predates the targeted-build fix. `plugins update` is a
+  `git pull --ff-only`, so it refuses a dirty tree. Until the install moves
+  **and** the backend restarts, a `career_match` + tailored build from this host
+  runs the old selection code. Re-pin with
+  `plugins install <repo> --force --ref <stable-sha>`, restart, confirm the
+  version. The same applies to the `egtest` harness profile (0.3.0).
 - ☑ **The clean-profile test passed** (2026-10-22). A throwaway profile
   `egtest` was created, the plugin was installed into it from the git URL
   (the clone copied an `evergreen/` dir, which was removed so the install
@@ -242,8 +263,9 @@ These forks were decided and are no longer open:
 - ☑ Four templates shipped (`plain`, `yaac`, `altacv`, `minimal`), each
   compiled by the selftest, each visually reviewed.
 - ☑ `hermes plugins validate` passes; `hermes plugins doctor --ci` exits 0.
-- ☑ Selftest: 37 core checks + 36 tool-level end-to-end checks + 8 CLI
-  checks + 26 schema/handler checks, all green. The CLI checks exist
+- ☑ Selftest: 43 core checks + 45 tool-level end-to-end checks + 9 CLI
+  checks + 30 schema/handler checks (127 total, counted from a local run's
+  `[PASS]` lines on 2026-11-11), all green. The CLI checks exist
   because the `hermes career` subcommand is wired separately from the
   tools and had silently drifted out of sync with them. The schema
   checks exist for the same reason: `career_init`'s schema once still
